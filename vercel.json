@@ -1,17 +1,36 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api",
-      "destination": "https://kisha-volcanologic-motherly.ngrok-free.dev/api"
+      "src": "/api$",
+      "dest": "https://kisha-volcanologic-motherly.ngrok-free.dev/api",
+      "transforms": [
+        {
+          "type": "request.headers",
+          "op": "set",
+          "target": { "key": "ngrok-skip-browser-warning" },
+          "args": "1"
+        }
+      ]
     },
     {
-      "source": "/api/:path*",
-      "destination": "https://kisha-volcanologic-motherly.ngrok-free.dev/api/:path*"
+      "src": "/api/(.*)",
+      "dest": "https://kisha-volcanologic-motherly.ngrok-free.dev/api/$1",
+      "transforms": [
+        {
+          "type": "request.headers",
+          "op": "set",
+          "target": { "key": "ngrok-skip-browser-warning" },
+          "args": "1"
+        }
+      ]
     },
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }

@@ -94,6 +94,11 @@ test('HTTP ingress enforces origin, cross-site, and body parsing limits with sec
   assert.equal(crossOrigin.statusCode, 403);
   assert.equal(crossOrigin.json().error, 'origin_denied');
 
+  const deployedFrontend = await request('POST', '/api/auth/logout', {
+    body: {}, headers: { origin: 'https://crewos-paytm-hack-three.vercel.app', 'sec-fetch-site': 'same-origin' },
+  });
+  assert.equal(deployedFrontend.statusCode, 200);
+
   const crossSite = await request('POST', '/api/auth/logout', {
     body: {}, headers: { 'sec-fetch-site': 'cross-site' },
   });

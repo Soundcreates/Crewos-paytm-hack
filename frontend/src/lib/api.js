@@ -8,8 +8,12 @@ export async function api(path, options = {}) {
   const background = options.method === 'POST' && (/^\/api\/(documents|simulations\/[^/]+\/run|meetings\/[^/]+\/(prepare|discuss|run)|employees\/[^/]+\/probation)$/.test(path));
   const config = { credentials: 'same-origin', ...options, headers: { ...(background ? {prefer:'respond-async'} : {}), ...(options.body && !(options.body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) } };
   const response = await fetch(path, config);
-  const data = response.status === 204 ? null : await response.json().catch(() => null);
+  const contentType = response.headers.get('content-type') || '';
+  const data = response.status === 204 ? null : contentType.toLowerCase().includes('json') ? await response.json().catch(() => null) : null;
   if (!response.ok) throw new ApiError(data?.message || 'The request could not be completed.',response.status,data?.code,response.headers.get('x-request-id'));
+  if (response.status !== 204 && !contentType.toLowerCase().includes('json')) {
+    throw new ApiError('The backend returned a non-JSON response. Check that Vercel is forwarding API requests to the running ngrok backend.',502,'unexpected_backend_response',response.headers.get('x-request-id'));
+  }
   if (response.status === 202 && data?.jobId) {
     announceOperation({id:data.jobId,path,status:'running'});
     for (;;) {
@@ -30,7 +34,11 @@ export async function neonAuth(path, { method = 'POST', body } = {}) {
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  const data = response.status === 204 ? null : await response.json().catch(() => null);
+  const contentType = response.headers.get('content-type') || '';
+  const data = response.status === 204 ? null : contentType.toLowerCase().includes('json') ? await response.json().catch(() => null) : null;
+  if (response.ok && response.status !== 204 && !contentType.toLowerCase().includes('json')) {
+    throw new ApiError('The backend returned a non-JSON response. Check that Vercel is forwarding API requests to the running ngrok backend.',502,'unexpected_backend_response',response.headers.get('x-request-id'));
+  }
   const error = data?.error;
   if (!response.ok || error) {
     const code = data?.code || data?.errorCode || error?.code || error?.errorCode;
