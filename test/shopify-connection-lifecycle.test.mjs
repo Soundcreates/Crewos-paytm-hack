@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createShopifyConnectionLifecycle, parseShopifyScopes } from '../backend/src/services/shopify-connection-lifecycle.mjs';
-import { createShopifyOAuthClientFromEnv } from '../backend/src/integrations/shopify-oauth-client.mjs';
+import { createShopifyOAuthClientFromEnv, SHOPIFY_OAUTH_SCOPES } from '../backend/src/integrations/shopify-oauth-client.mjs';
 
 const orgId = 'org_oauth';
 const managerId = 'user_manager';
@@ -25,7 +25,7 @@ test('Shopify scope parser handles JSON persistence and OAuth comma lists, rejec
   assert.deepEqual(parseShopifyScopes('read_products,,read_inventory'), []);
 });
 
-function fixture({ enabled = true, nowValue = '2026-10-31T00:00:00.000Z', grantedScope = 'read_products', identityDomain = domain } = {}) {
+function fixture({ enabled = true, nowValue = '2026-10-31T00:00:00.000Z', grantedScope = SHOPIFY_OAUTH_SCOPES.join(','), identityDomain = domain } = {}) {
   let currentTime = Date.parse(nowValue);
   let nextId = 0;
   const connections = new Map();
@@ -74,7 +74,7 @@ function fixture({ enabled = true, nowValue = '2026-10-31T00:00:00.000Z', grante
       async begin({ shop, callbackPath, rawResponse }) {
         const state = 'fixture-state-one-time';
         rawResponse.setHeader('set-cookie', `shopify_app_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=${callbackPath}`);
-        rawResponse.setHeader('location', `https://${shop}/admin/oauth/authorize?client_id=fixture&scope=read_products&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`);
+        rawResponse.setHeader('location', `https://${shop}/admin/oauth/authorize?client_id=fixture&scope=${encodeURIComponent(SHOPIFY_OAUTH_SCOPES.join(','))}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`);
         rawResponse.statusCode = 302; rawResponse.end();
       },
       async callback() {
@@ -95,7 +95,7 @@ function callbackRequest({ state, shop = domain, hmac = 'valid-fixture-hmac' }) 
 }
 function callbackResponse() { return { writeHead(status, headers) { this.status = status; this.headers = headers; }, end() { this.ended = true; } }; }
 
-test('Shopify OAuth begins only when configured and binds exact domain, environment, minimal scopes, org and manager', async () => {
+test('Shopify OAuth begins only when configured and binds exact domain, environment, requested scopes, org and manager', async () => {
   const disabled = fixture({ enabled: false });
   assert.equal(disabled.lifecycle.ready, false);
   await assert.rejects(disabled.lifecycle.begin({ orgId, managerUserId: managerId, storeDomain: domain, environment: 'staging', request: {} }), { code: 'shopify_oauth_setup_required' });
@@ -105,7 +105,7 @@ test('Shopify OAuth begins only when configured and binds exact domain, environm
   const begun = await setup.lifecycle.begin({ orgId, managerUserId: managerId, storeDomain: domain, environment: 'staging', request: { headers: {}, method: 'POST', url: '/connect' } });
   const authorization = new URL(begun.authorizationUrl);
   assert.equal(authorization.hostname, domain);
-  assert.equal(authorization.searchParams.get('scope'), 'read_products');
+  assert.equal(authorization.searchParams.get('scope'), SHOPIFY_OAUTH_SCOPES.join(','));
   assert.equal(begun.connection.status, 'setup_required');
   assert.match(begun.setCookie, /^shopify_app_state=/);
   assert.equal('accessToken' in begun.connection, false);
@@ -138,10 +138,23 @@ test('callback verifies HMAC, exact Admin API store identity, scope, ownership a
   { orgId, connectionId: begun.connection.id, providerAccountId: domain, environment: 'staging' });
   const listed = await setup.lifecycle.list(orgId);
   assert.equal(listed[0].readiness, 'ready');
-  assert.deepEqual(listed[0].scopes, ['read_products']);
+  assert.deepEqual(listed[0].scopes, [...SHOPIFY_OAUTH_SCOPES, 'read_themes']);
   assert.equal(JSON.stringify(listed).includes('fixture-access-token'), false);
   await assert.rejects(setup.lifecycle.complete({ orgId, managerUserId: managerId, request: callbackRequest({ state }), response: callbackResponse() }), { code: 'shopify_oauth_state_invalid' });
   assert.equal(setup.callbackCount, 1);
+});
+
+test('Shopify write scopes imply the matching read scopes', async () => {
+  const grantedScope = SHOPIFY_OAUTH_SCOPES.filter(scope => !['read_products', 'read_inventory'].includes(scope)).join(',');
+  const setup = fixture({ grantedScope });
+  const begun = await setup.lifecycle.begin({ orgId, managerUserId: managerId, storeDomain: domain, environment: 'staging', request: { headers: {}, method: 'POST', url: '/connect' } });
+  const state = new URL(begun.authorizationUrl).searchParams.get('state');
+  await setup.lifecycle.complete({ orgId, managerUserId: managerId, request: callbackRequest({ state }), response: callbackResponse() });
+  const [connection] = await setup.lifecycle.list(orgId);
+  assert.equal(connection.readiness, 'ready');
+  assert.ok(connection.scopes.includes('read_products'));
+  assert.ok(connection.scopes.includes('read_inventory'));
+  assert.ok(connection.scopes.includes('read_themes'));
 });
 
 test('callback rejects Admin API identity or scope mismatch without persisting a credential', async () => {
@@ -150,11 +163,16 @@ test('callback rejects Admin API identity or scope mismatch without persisting a
   const state = new URL(begun.authorizationUrl).searchParams.get('state');
   await assert.rejects(mismatch.lifecycle.complete({ orgId, managerUserId: managerId, request: callbackRequest({ state }), response: callbackResponse() }), { code: 'shopify_store_identity_mismatch' });
   assert.equal(mismatch.credentialService.lastRotation, undefined);
-  const extraScope = fixture({ grantedScope: 'read_products,write_products' });
+  const extraScope = fixture({ grantedScope: `${SHOPIFY_OAUTH_SCOPES.join(',')},write_script_tags` });
   const second = await extraScope.lifecycle.begin({ orgId, managerUserId: managerId, storeDomain: domain, environment: 'production', request: { headers: {}, method: 'POST', url: '/connect' } });
   const secondState = new URL(second.authorizationUrl).searchParams.get('state');
   await assert.rejects(extraScope.lifecycle.complete({ orgId, managerUserId: managerId, request: callbackRequest({ state: secondState }), response: callbackResponse() }), { code: 'shopify_oauth_grant_mismatch' });
   assert.equal(extraScope.credentialService.lastRotation, undefined);
+  const missingScope = fixture({ grantedScope: 'read_products' });
+  const third = await missingScope.lifecycle.begin({ orgId, managerUserId: managerId, storeDomain: domain, environment: 'production', request: { headers: {}, method: 'POST', url: '/connect' } });
+  const thirdState = new URL(third.authorizationUrl).searchParams.get('state');
+  await assert.rejects(missingScope.lifecycle.complete({ orgId, managerUserId: managerId, request: callbackRequest({ state: thirdState }), response: callbackResponse() }), { code: 'shopify_oauth_grant_mismatch' });
+  assert.equal(missingScope.credentialService.lastRotation, undefined);
 });
 
 test('expired intent and disconnect keep credentials org-scoped and unavailable', async () => {

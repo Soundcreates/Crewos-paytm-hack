@@ -21,7 +21,8 @@
     "cron-parser": "5.10.2",
     "patchright-core": "1.62.2",
     "pg": "^8.23.0",
-    "solari-crew-core": "0.1.0"
+    "solari-crew-core": "0.1.0",
+    "twilio": "^6.2.0"
   },
   "devDependencies": {
     "typescript": "5.9.3"

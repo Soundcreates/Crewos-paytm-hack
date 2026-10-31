@@ -25,6 +25,10 @@ export function parseShopifyScopes(value) {
   return normalized;
 }
 
+function effectiveScopes(scopes) {
+  return [...new Set(scopes.flatMap(scope => scope.startsWith('write_') ? [scope, `read_${scope.slice(6)}`] : [scope]))];
+}
+
 function shopifyResponseShim() {
   const headers = {};
   return {
@@ -165,10 +169,12 @@ export function createShopifyConnectionLifecycle({ repository, credentialService
     try {
       callback = await shopify.auth.callback({ rawRequest: request, rawResponse: oauthResponse, expiring: false });
       const session = callback?.session;
-      const granted = parseShopifyScopes(session?.scope);
+      const providerGranted = parseShopifyScopes(session?.scope);
+      const granted = effectiveScopes(providerGranted);
       const requested = parseShopifyScopes(intent.requested_scopes);
+      const allowed = effectiveScopes(requested);
       if (!session || session.shop !== intent.store_domain || typeof session.accessToken !== 'string' || !session.accessToken ||
-          !granted.includes('read_products') || granted.some((scope) => !requested.includes(scope))) {
+          !granted.includes('read_products') || requested.some((scope) => !granted.includes(scope)) || providerGranted.some((scope) => !allowed.includes(scope))) {
         fail('Shopify granted scopes or store identity did not match this authorization.', 'shopify_oauth_grant_mismatch', 403);
       }
       const adminClient = new shopify.clients.Graphql({ session });
@@ -182,7 +188,7 @@ export function createShopifyConnectionLifecycle({ repository, credentialService
         await credentialService.rotate({ orgId, connectionId: connection.id, providerAccountId: intent.store_domain, environment: intent.environment,
           credential: session.accessToken, expiresAt });
         const updated = await repository.completeShopifyConnection(orgId, connection.id, JSON.stringify(granted),
-          JSON.stringify({ setupSource: 'shopify_oauth', identityVerified: true, verifiedStoreDomain: intent.store_domain, apiVersion: shopify.config?.apiVersion || null }), timestamp());
+          JSON.stringify({ setupSource: 'shopify_oauth', identityVerified: true, verifiedStoreDomain: intent.store_domain, apiVersion: shopify.config?.apiVersion || null, providerGrantedScopes: providerGranted }), timestamp());
         if (updated?.changes !== 1) fail('Shopify connection could not be finalized under its organization.', 'shopify_connection_finalize_failed', 409);
         const finished = await repository.finishShopifyOAuthIntent(hash, 'completed', timestamp());
         if (finished?.changes !== 1) fail('Shopify authorization state could not be consumed exactly once.', 'shopify_oauth_replay', 409);

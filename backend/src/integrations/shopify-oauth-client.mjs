@@ -2,7 +2,7 @@ import '@shopify/shopify-api/adapters/node';
 import { shopifyApi } from '@shopify/shopify-api';
 
 export const SHOPIFY_OAUTH_CALLBACK_PATH = '/api/commerce/v2/shopify/oauth/callback';
-export const SHOPIFY_OAUTH_SCOPES = Object.freeze(['read_products']);
+export const SHOPIFY_OAUTH_SCOPES = Object.freeze(['read_products', 'write_products', 'read_inventory', 'write_inventory', 'read_orders', 'read_locations', 'read_publications', 'write_themes']);
 
 const QUARTERLY_API_VERSION = /^\d{4}-(01|04|07|10)$/;
 

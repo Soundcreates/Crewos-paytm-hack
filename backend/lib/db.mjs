@@ -1,3 +1,5 @@
+import { twilioSchema } from './twilio-schema.mjs';
+import { shopifyDevStoreSchema, shopifyDevThemeSchema } from './shopify-dev-store-schema.mjs';
 import { pilotSchema, pilotColumns } from './pilot-schema.mjs';
 import { scheduleSchema } from './schedule-schema.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -1063,6 +1065,10 @@ const migrations = [
       await client.query(v28Schema);
     },
   },
+  { version: 29, name: 'twilio-whatsapp-inbound', sqlite: () => db.exec(twilioSchema), postgres: client => client.query(twilioSchema) },
+  { version: 30, name: 'shopify-development-store-provisioning', sqlite: () => db.exec(shopifyDevStoreSchema), postgres: client => client.query(shopifyDevStoreSchema) },
+  { version: 31, name: 'shopify-development-theme-previews', sqlite: () => db.exec(shopifyDevThemeSchema), postgres: client => client.query(shopifyDevThemeSchema) },
+  { version: 32, name: 'twilio-whatsapp-sales-and-support-assignments', sqlite: () => db.exec(twilioSchema), postgres: client => client.query(twilioSchema) },
 ];
 
 function validateMigrationHistory(rows) {

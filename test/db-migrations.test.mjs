@@ -36,6 +36,10 @@ const migrationVersions = [
   'employee-delegation-foundations',
   'delegation-capability-scope',
   'event-workflow-durable-execution-and-delegation-fencing',
+  'twilio-whatsapp-inbound',
+  'shopify-development-store-provisioning',
+  'shopify-development-theme-previews',
+  'twilio-whatsapp-sales-and-support-assignments',
 ];
 
 function initializeDatabase(filename) {
@@ -109,6 +113,7 @@ test('fresh startup records ordered migrations and reruns without changing histo
     assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='crew_tasks'").get());
     assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='external_operations'").get());
     assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='shopify_oauth_intents'").get());
+    assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='twilio_whatsapp_connection_employees'").get());
     assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_shopify_oauth_one_active_intent'").get());
     for (const table of ['sarvam_voice_sessions','sarvam_voice_attempts','sarvam_voice_callbacks','sarvam_voice_decision_intents']) {
       assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table), `${table} should exist after migration v25`);

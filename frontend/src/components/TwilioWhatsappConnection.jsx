@@ -1,0 +1,13 @@
+import { useEffect, useState } from 'react';
+import { api } from '../lib/api.js';
+export function TwilioWhatsappConnection() {
+  const [data,setData]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[replies,setReplies]=useState({});
+  const load=async()=>{const d=await api('/api/twilio/whatsapp');setData(d);};
+  useEffect(()=>{load().catch(e=>setError(e.message));},[]);
+  const act=async fn=>{setBusy(true);setError('');try{await fn();await load();}catch(e){setError(e.message);}finally{setBusy(false);}};
+  return <section className="panel"><h2>Twilio WhatsApp · Real customer inbox</h2><p>After the onboarding interview creates Sales and Customer Service, CrewOS assigns both agents to this sender. Inbound messages create reply drafts; a manager reviews and sends them. Demo simulation remains separate. Free text replies require a customer message within 24 hours and no opt-out.</p>{error&&<p role="alert">{error}</p>}
+    {data&&<><p>{data.configured?'Server credentials configured':'Server Twilio credentials needed'}</p><button disabled={busy||!data.configured} onClick={()=>act(()=>api('/api/twilio/whatsapp/connections',{method:'POST',body:'{}'}))}>Connect WhatsApp to Sales and Customer Service</button><button disabled={busy} onClick={()=>act(load)}>Refresh inbox</button>
+    {data.connections.map(c=><div key={c.id}><p>{c.sender} · {c.active?'Enabled':'Disconnected'} · Assigned to {c.employees?.map(e=>e.name).join(' and ')||'employees pending'}</p><p>Twilio incoming message webhook (POST): <code>{c.webhookUrl||'Set TWILIO_WHATSAPP_PUBLIC_URL'}</code></p>{!!c.active&&<button disabled={busy} onClick={()=>act(()=>api(`/api/twilio/whatsapp/connections/${c.id}`,{method:'DELETE'}))}>Disconnect</button>}</div>)}
+    {data.messages.map(m=>{let result={};try{result=JSON.parse(m.workflow_result||'{}');}catch{}return <article key={m.id}><h3>{m.sender}</h3><p>{m.body||'Media-only message: manual review required'}</p><p>{m.received_at} · Assigned to {m.workflow_employee_name||'pending employee'} · Employee task: {m.workflow_status||'Not queued'} · Reply: {m.reply_state}</p>{m.workflow_id&&<a href={`#tasks?task=${encodeURIComponent(m.workflow_id)}`}>Review employee task</a>}<textarea aria-label={`Reply to ${m.sender}`} maxLength={1600} value={replies[m.id]??result.reply??''} onChange={e=>setReplies({...replies,[m.id]:e.target.value})}/><button disabled={busy||m.reply_state!=='none'||!!m.opted_out} onClick={()=>act(()=>api(`/api/twilio/whatsapp/messages/${m.id}/reply`,{method:'POST',body:JSON.stringify({body:replies[m.id]??result.reply??'',confirmLiveSend:true})}))}>Send real WhatsApp reply</button></article>;})}</>}
+  </section>;
+}

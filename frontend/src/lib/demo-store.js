@@ -47,17 +47,28 @@ export const DEMO_STORES = Object.freeze({
 });
 
 const storeMatchers = [
-  ['belts', /\b(belt|belts|leather goods)\b/i],
-  ['bags', /\b(laptop bag|laptop bags|briefcase|backpack|backpacks|tech tote|carry goods|bags?)\b/i],
-  ['technology', /\b(laptop|laptops|computer|computers|electronics|technology|tech brand)\b/i],
-  ['footwear', /\b(shoe|shoes|sneaker|sneakers|footwear|boots|trainers)\b/i],
-  ['clothing', /\b(clothing|apparel|fashion|shirt|shirts|tee|t-shirt|dress|jacket|garment)\b/i],
+  ['belts', /\b(?:belts?|leather goods)\b/gi],
+  ['bags', /\b(?:laptop bags?|bags? for laptops?|briefcases?|backpacks?|tech totes?|carry goods|handbags?|bags?)\b/gi],
+  ['technology', /\b(?:laptops?|computers?|electronics|technology|tech brand)\b/gi],
+  ['footwear', /\b(?:shoes?|sneakers?|footwear|boots?|trainers)\b/gi],
+  ['clothing', /\b(?:clothing|apparel|fashion|shirts?|tees?|t-shirts?|dresses|dress|jackets?|garments?)\b/gi],
 ];
 
 export function inferDemoStoreType(turns = []) {
-  const text = (Array.isArray(turns) ? turns : [])
-    .filter(turn => turn?.role === 'user')
-    .map(turn => String(turn.en_text || turn.content || ''))
-    .join(' ');
-  return storeMatchers.find(([, matcher]) => matcher.test(text))?.[0] || 'clothing';
+  const userTurns = (Array.isArray(turns) ? turns : []).filter(turn => turn?.role === 'user');
+  for (let index = userTurns.length - 1; index >= 0; index -= 1) {
+    const text = String(userTurns[index].en_text || userTurns[index].content || '');
+    const matches = storeMatchers.flatMap(([type, matcher]) => [...text.matchAll(matcher)].map(match => ({ type, start: match.index, end: match.index + match[0].length })));
+    // Prefer a longer category phrase over an overlapping generic term, e.g. "laptop bags" over "laptop".
+    const distinct = matches.filter(match => !matches.some(other => other !== match && other.start <= match.start && other.end >= match.end && other.end - other.start > match.end - match.start));
+    distinct.sort((a, b) => b.end - a.end);
+    if (distinct.length) return distinct[0].type;
+  }
+  return 'clothing';
+}
+
+export function resolveVoiceHandoff({ handoff, connected, callContext, transcript }) {
+  if (!handoff || !connected) return null;
+  if (callContext) return { action: 'return-chief-call', storeType: callContext.storeType };
+  return { action: 'complete-demo-interview', storeType: inferDemoStoreType(transcript) };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
-import { inferDemoStoreType } from '../lib/demo-store.js';
+import { inferDemoStoreType, resolveVoiceHandoff } from '../lib/demo-store.js';
 import { Badge, Button, Field } from '../components/ui.jsx';
 
 const emptyConfig = {
@@ -42,6 +42,7 @@ export function VoicePage({ data, user, actions, callContext = null }) {
   const stopCallbackRef = useRef(false);
   const mountedRef = useRef(true);
   const consentRef = useRef(false);
+  const connectedRef = useRef(false);
   const autoProvisionAttemptedRef = useRef(false);
 
   const activeConnections = connections.filter(connected);
@@ -192,7 +193,7 @@ export function VoicePage({ data, user, actions, callContext = null }) {
         catch (failure) { finalError = finalError || `Could not end the authenticated voice session: ${failure.message}`; }
       }
       const transcript = turnsRef.current;
-      const goodInterview = transcript.some(turn => turn.role === 'user' && turn.en_text.trim()) && transcript.some(turn => turn.role === 'agent' && turn.en_text.trim());
+      const next = resolveVoiceHandoff({ handoff, connected: connectedRef.current, callContext, transcript });
       try {
         if (sessionId && consentRef.current && transcript.some(turn => turn.role === 'user' && turn.en_text.trim())) {
           await api(`/api/sarvam/v2/sessions/${encodeURIComponent(sessionId)}/transcript`, { method: 'POST', body: JSON.stringify({ turns: transcript }) });
@@ -205,13 +206,13 @@ export function VoicePage({ data, user, actions, callContext = null }) {
         voiceSessionRef.current = null;
         turnsRef.current = [];
         consentRef.current = false;
+        connectedRef.current = false;
         if (mountedRef.current) {
           setTurns([]); setConsent(false); setCallState('idle');
           if (finalError) setError(finalError);
         }
-        if (handoff && goodInterview && mountedRef.current) {
-          if (callContext) actions?.('return-chief-call', callContext.storeType, { decisionProposals });
-          else actions?.('complete-demo-interview', inferDemoStoreType(transcript));
+        if (next && mountedRef.current) {
+          actions?.(next.action, next.storeType, { decisionProposals, voiceSessionId: sessionId });
         }
         finalizeRef.current = null;
       }
@@ -223,6 +224,7 @@ export function VoicePage({ data, user, actions, callContext = null }) {
   async function startSession() {
     if (!canStart) return;
     setBusy(true); setError(''); setNotice(''); setTurns([]); turnsRef.current = [];
+    connectedRef.current = false;
     consentRef.current = true;
     try {
       const session = await api('/api/sarvam/v2/sessions', {
@@ -270,6 +272,7 @@ export function VoicePage({ data, user, actions, callContext = null }) {
         audioInterface: new BrowserAudioInterface(),
         stateCallback: state => {
           if (!mountedRef.current) return;
+          if ([AgentState.CONNECTED, AgentState.LISTENING, AgentState.SPEAKING].includes(state)) connectedRef.current = true;
           const labels = { [AgentState.IDLE]: 'idle', [AgentState.CONNECTING]: 'connecting', [AgentState.CONNECTED]: 'connected', [AgentState.LISTENING]: 'listening', [AgentState.SPEAKING]: 'speaking', [AgentState.ERROR]: 'error' };
           setCallState(labels[state] || 'connecting');
           if (state === AgentState.ERROR) setError('Sarvam voice encountered an error. End this session and start a new authenticated session.');
@@ -283,6 +286,7 @@ export function VoicePage({ data, user, actions, callContext = null }) {
       await agent.start();
       const connectedOk = await agent.waitForConnect(12);
       if (!connectedOk) throw new Error('Sarvam did not establish an audio connection. Check the app binding, microphone permission, and same-origin proxy setup.');
+      connectedRef.current = true;
       if (mountedRef.current) setCallState('listening');
     } catch (failure) {
       await finishSession(true);
@@ -378,6 +382,7 @@ export function VoicePage({ data, user, actions, callContext = null }) {
       {callState === 'idle' && <label className="voice-consent"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} disabled={busy}/><span>{callContext ? 'Save this call transcript to Chief onboarding for review after we hang up.' : 'Save this conversation to Chief onboarding for review after the call.'}</span></label>}
       <div className="voice-controls">
         {callState === 'idle' ? <Button kind="btn-primary" className="voice-main-button" onClick={startSession} disabled={!canStart}>{busy ? 'Connecting…' : callContext ? 'Answer Chief’s call' : 'Start conversation'}</Button> : <Button kind="btn-primary" className="voice-main-button" onClick={() => finishSession(true, { handoff: true })} disabled={busy}>End conversation</Button>}
+        {!callContext && callState === 'idle' && <Button kind="btn-secondary" onClick={() => actions?.('complete-demo-interview', inferDemoStoreType(turnsRef.current))} disabled={busy}>Continue to workspace</Button>}
       </div>
       <p className="voice-status-line">{selected ? `Voice ready · ${selected.config?.appId || 'Sarvam app'}` : ''}{onboarding?.state ? `${selected ? ' · ' : ''}Chief onboarding ${onboarding.state}` : ''}</p>
 

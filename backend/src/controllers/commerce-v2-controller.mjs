@@ -8,7 +8,7 @@ const SCOPES=['read_products','write_products','read_inventory','write_inventory
 function parseJson(value,fallback={}){try{return JSON.parse(value||'{}')}catch{return fallback}}
 const safeDomain=value=>typeof value==='string'&&/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(value);
 
-export function createCommerceV2Controller({repositories,HttpError,requireRole,transaction,id,now,sendJson,env=process.env,pilotMode=()=>false,currentPolicyRevision,shopifyLifecycle=null,shopifyCatalogApi=null}) {
+export function createCommerceV2Controller({repositories,HttpError,requireRole,transaction,id,now,sendJson,env=process.env,pilotMode=()=>false,currentPolicyRevision,shopifyLifecycle=null,shopifyCatalogApi=null,shopifyCallbackBridge=null,shopifyDevStores=null,shopifyDevThemes=null}) {
   async function connectionFor(orgId,connectionId){const connection=await repositories.foundation.findConnectionById(connectionId);if(!connection||connection.org_id!==orgId||connection.provider!=='shopify')throw new HttpError(404,'Commerce connection not found.');return connection;}
   function ensureEnabled(orgId){const status=organizationEngineV2Status(orgId,env);if(!status.enabled)throw new HttpError(404,'Organization Engine V2 is disabled for this workspace.');return status;}
   function ensureOutsidePilot(){if(pilotMode())throw new HttpError(403,'Commerce simulation writes are disabled by PILOT_MODE.','pilot_mode_blocked');}
@@ -26,14 +26,33 @@ export function createCommerceV2Controller({repositories,HttpError,requireRole,t
   return { async handle({path,method,response,body,context,org,user,request}) {
     if(!path.startsWith('/api/commerce/v2'))return false;
     requireRole(context,'manager');ensureEnabled(org.id);
-    if(path==='/api/commerce/v2/status'&&method==='GET')return sendJson(response,200,{enabled:true,providers:{shopify:{simulation:'available',oauth:shopifyLifecycle?.ready?'available':'setup_required',live:'setup_required'}},theme:{build:'local_only',push:'disabled',publish:'disabled'},environment:'simulation',pilotMode:Boolean(pilotMode())});
+    if(path==='/api/commerce/v2/status'&&method==='GET')return sendJson(response,200,{enabled:true,providers:{shopify:{simulation:'available',oauth:shopifyLifecycle?.ready?'available':'setup_required',callbackUrl:shopifyLifecycle?.ready?env.SHOPIFY_OAUTH_CALLBACK_URL:null,live:'setup_required'}},theme:{build:'local_only',push:'development_preview_only',publish:'disabled'},environment:'simulation',pilotMode:Boolean(pilotMode())});
+    if(path==='/api/commerce/v2/shopify/dev-store-theme'&&(method==='GET'||method==='POST')){
+      ensureOutsidePilot();
+      if(!shopifyDevThemes)throw new HttpError(503,'Development storefront previews are unavailable.','dev_theme_unavailable');
+      const sessionId=method==='GET'?new URL(request.url,'http://localhost').searchParams.get('voiceSessionId'):body.voiceSessionId;
+      if(typeof sessionId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(sessionId))throw new HttpError(400,'A voice session ID is required.','voice_session_invalid');
+      const result=method==='GET'?await shopifyDevThemes.read(org.id,sessionId):await shopifyDevThemes.create({orgId:org.id,userId:user.id,voiceSessionId:sessionId,category:body.category});
+      return sendJson(response,method==='POST'&&result?.status==='creating'?202:200,{theme:result});
+    }
+    if(path==='/api/commerce/v2/shopify/dev-stores'&&(method==='GET'||method==='POST')){
+      ensureOutsidePilot();
+      if(!shopifyDevStores)throw new HttpError(503,'Development store creation is unavailable.','dev_store_unavailable');
+      const sessionId=method==='GET'?new URL(request.url,'http://localhost').searchParams.get('voiceSessionId'):body.voiceSessionId;
+      if(typeof sessionId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(sessionId))throw new HttpError(400,'A voice session ID is required.','voice_session_invalid');
+      const result=method==='GET'?await shopifyDevStores.read(org.id,sessionId):await shopifyDevStores.create({orgId:org.id,userId:user.id,voiceSessionId:sessionId,name:body.name});
+      return sendJson(response,method==='POST'&&result?.status==='creating'?202:200,{store:result});
+    }
     if(path==='/api/commerce/v2/shopify/connections'&&method==='GET')return sendJson(response,200,shopifyLifecycle?await shopifyLifecycle.list(org.id):[]);
     if(path==='/api/commerce/v2/shopify/connections/connect'&&method==='POST'){
       ensureOutsidePilot();
       if(!shopifyLifecycle?.ready)throw new HttpError(503,'Shopify authorization requires server app credentials, a public HTTPS callback URL, and credential encryption setup.','shopify_oauth_setup_required');
       const result=await shopifyLifecycle.begin({orgId:org.id,managerUserId:user.id,storeDomain:body.storeDomain,environment:body.environment||'staging',request});
       response.setHeader('cache-control','no-store');
-      if(result.setCookie)response.setHeader('set-cookie',result.setCookie);
+      const bridgeCookie=shopifyCallbackBridge?.issue(context);
+      if(shopifyCallbackBridge&&!bridgeCookie)throw new HttpError(503,'Shopify callback session could not be prepared.','shopify_callback_session_unavailable');
+      const cookies=[...(Array.isArray(result.setCookie)?result.setCookie:result.setCookie?[result.setCookie]:[]),...(bridgeCookie?[bridgeCookie]:[])];
+      if(cookies.length)response.setHeader('set-cookie',cookies);
       return sendJson(response,200,{authorizationUrl:result.authorizationUrl,connection:result.connection,expiresAt:result.expiresAt,tokenReturned:false});
     }
     if(path==='/api/commerce/v2/shopify/oauth/callback'&&method==='GET'){

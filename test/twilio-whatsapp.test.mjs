@@ -1,0 +1,52 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
+import { DatabaseSync } from 'node:sqlite';
+import twilio from 'twilio';
+import { twilioSchema } from '../backend/lib/twilio-schema.mjs';
+import { createTwilioWhatsappRepository } from '../backend/src/repositories/twilio-whatsapp-repository.mjs';
+import { createTwilioWhatsappController,parseVerifiedWebhook,webhookUrl,assertReplyAllowed } from '../backend/src/controllers/twilio-whatsapp-controller.mjs';
+const env={TWILIO_ACCOUNT_SID:'AC'+'a'.repeat(32),TWILIO_AUTH_TOKEN:'fixture-token',TWILIO_WHATSAPP_FROM:'whatsapp:+14155238886',TWILIO_WHATSAPP_PUBLIC_URL:'https://fixture.example'};
+const params={AccountSid:env.TWILIO_ACCOUNT_SID,To:env.TWILIO_WHATSAPP_FROM,From:'whatsapp:+15555550123',MessageSid:'SM'+'b'.repeat(32),Body:'Where is my order?'};
+function request(p=params,url=webhookUrl(env,'twilio-whatsapp-default')) { const raw=new URLSearchParams(p).toString();const req=Readable.from([Buffer.from(raw)]);req.method='POST';req.headers={'content-type':'application/x-www-form-urlencoded','x-twilio-signature':twilio.getExpectedTwilioSignature(env.TWILIO_AUTH_TOKEN,url,p)};return req; }
+test('official SDK signature uses exact public URL and all fields',()=>{
+ const req=request();assert.equal(parseVerifiedWebhook(req,Buffer.from(new URLSearchParams(params).toString()),webhookUrl(env,'twilio-whatsapp-default'),env.TWILIO_AUTH_TOKEN).Body,params.Body);
+ assert.throws(()=>parseVerifiedWebhook(req,Buffer.from(new URLSearchParams(params).toString()),'http://internal/webhook',env.TWILIO_AUTH_TOKEN),/signature/);
+ assert.throws(()=>parseVerifiedWebhook(req,Buffer.from(new URLSearchParams({...params,Body:'tampered'}).toString()),webhookUrl(env,'twilio-whatsapp-default'),env.TWILIO_AUTH_TOKEN),/signature/);
+ assert.throws(()=>webhookUrl({...env,TWILIO_WHATSAPP_PUBLIC_URL:'https://example.com/path'},'id'),/origin/);
+});
+test('reply window and opt-out fail closed',()=>{
+ assertReplyAllowed({received_at:new Date().toISOString(),opted_out:0});
+ assert.throws(()=>assertReplyAllowed({received_at:new Date(Date.now()-86400001).toISOString()}),/24-hour/);
+ assert.throws(()=>assertReplyAllowed({received_at:new Date().toISOString(),opted_out:1}),/consent/);
+});
+test('durable ingress deduplication, tenant binding, opt-out, explicit send and uncertain-send fencing',async()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE memberships(org_id TEXT,user_id TEXT,role TEXT); CREATE TABLE organizations(id TEXT PRIMARY KEY); CREATE TABLE employees(id TEXT PRIMARY KEY,org_id TEXT,name TEXT,title TEXT,department TEXT,state TEXT,created_at TEXT); CREATE TABLE users(id TEXT PRIMARY KEY); CREATE TABLE workflows(id TEXT,org_id TEXT,employee_id TEXT,status TEXT,result TEXT);');db.exec(twilioSchema);db.exec("INSERT INTO memberships VALUES('org','manager','manager'); INSERT INTO organizations VALUES('org'); INSERT INTO employees VALUES('employee','org','Sales','Sales Agent','Sales','active','2026-01-01'); INSERT INTO employees VALUES('support','org','Customer Care','Customer Support Agent','Support','active','2026-01-02'); INSERT INTO users VALUES('manager');");
+ const sql={all:(q,...p)=>db.prepare(q).all(...p),get:(q,...p)=>db.prepare(q).get(...p),run:(q,...p)=>db.prepare(q).run(...p)};
+ const r=createTwilioWhatsappRepository(sql);
+ let sequence=0,workflows=0,sends=0;let org='org';
+ const controller=createTwilioWhatsappController({repository:r,env,newId:()=>`id_${++sequence}`,createWorkflow:async()=>{workflows++;return {id:'workflow'};},currentContext:async()=>({org:{id:org},user:{id:'manager'}}),requireRole:()=>{},readBody:async req=>req.body,sendJson:(res,status,body)=>{res.status=status;res.body=body;},sendMessage:async()=>{sends++;throw Error('fixture timeout');}});
+ const connectResponse={};await controller({method:'POST',body:{}},connectResponse,new URL('https://crewos.example/api/twilio/whatsapp/connections'));
+ assert.equal(connectResponse.body.id,'twilio-whatsapp-default');assert.deepEqual(connectResponse.body.employees.map(e=>e.name),['Sales','Customer Care']);
+ assert.deepEqual((await r.assignments('twilio-whatsapp-default')).map(e=>e.role),['sales','customer_service']);
+ const response=()=>({writeHead(){},end(){}});const url=new URL(webhookUrl(env,'twilio-whatsapp-default'));
+ await controller(request(),response(),url);await controller(request(),response(),url);assert.equal(workflows,1);assert.equal((await r.messages('org')).length,1);assert.equal((await r.messages('other')).length,0);
+ await assert.rejects(controller(request({...params,To:'whatsapp:+15555559999'}),response(),url),/binding/);
+ const message=(await r.messages('org'))[0];const replyUrl=new URL(`https://fixture.example/api/twilio/whatsapp/messages/${message.id}/reply`);
+ org='other';await assert.rejects(controller({method:'POST',body:{confirmLiveSend:true,body:'Hello'}},response(),replyUrl),/unavailable/);org='org';
+ await assert.rejects(controller({method:'POST',body:{body:'Hello'}},response(),replyUrl),/Confirm/);assert.equal(sends,0);
+ await assert.rejects(controller({method:'POST',body:{confirmLiveSend:true,body:'Hello'}},response(),replyUrl),/unknown/);
+ await assert.rejects(controller({method:'POST',body:{confirmLiveSend:true,body:'Hello'}},response(),replyUrl),/already attempted/);assert.equal(sends,1);
+ await controller(request({...params,MessageSid:'SM'+'c'.repeat(32),Body:'STOP'}),response(),url);
+ assert.equal(workflows,1);await assert.rejects(async()=>assertReplyAllowed(await r.latest('org','twilio-whatsapp-default',params.From)),/consent/);
+ const successParams={...params,MessageSid:'SM'+'d'.repeat(32),From:'whatsapp:+15555550124'};
+ await controller(request(successParams),response(),url);
+ const successMessage=await r.bySid(successParams.MessageSid);
+ const successful=createTwilioWhatsappController({repository:r,env,currentContext:async()=>({org:{id:'org'},user:{id:'manager'}}),requireRole:()=>{},readBody:async req=>req.body,sendJson:(res,status,body)=>{res.status=status;res.body=body;},sendMessage:async args=>{assert.equal(args.to,successParams.From);assert.equal(args.from,env.TWILIO_WHATSAPP_FROM);return {sid:'SM'+'e'.repeat(32)};}});
+ const sentResponse={};await successful({method:'POST',body:{confirmLiveSend:true,body:'Please share your order reference.'}},sentResponse,new URL(`https://fixture.example/api/twilio/whatsapp/messages/${successMessage.id}/reply`));
+ assert.equal(sentResponse.body.status,'accepted');assert.equal(sentResponse.body.delivered,false);
+ await controller(request({...params,MessageSid:'SM'+'f'.repeat(32),Body:'hello'}),response(),url);
+ assert.equal((await r.bySid('SM'+'f'.repeat(32))).opted_out,1);
+ db.prepare("DELETE FROM memberships").run();assert.equal(await r.connection('twilio-whatsapp-default'),undefined);
+ db.close();
+});

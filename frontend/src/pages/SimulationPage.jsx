@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Heading, Panel } from '../components/ui.jsx';
 import { DEMO_STORES } from '../lib/demo-store.js';
+import ShopifyLiveConnection from '../components/ShopifyLiveConnection.jsx';
 
 const employees = [
   { id: 'maya', name: 'Maya Chen', role: 'Sales agent', initials: 'MC', color: '#e8b66f', skills: 'WhatsApp sales · order lookups' },
@@ -13,7 +14,7 @@ const seedMessages = store => [
 ];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-export function SimulationPage({ actions, storeType = 'clothing', restoreState = null }) {
+export function SimulationPage({ actions, storeType = 'clothing', voiceSessionId = null, restoreState = null, historyOwner = null, onRegisterSnapshot = null }) {
   const [selectedStoreType, setSelectedStoreType] = useState(Object.hasOwn(DEMO_STORES, storeType) ? storeType : 'clothing');
   const store = DEMO_STORES[selectedStoreType];
   const [setupStage, setSetupStage] = useState(0);
@@ -26,6 +27,13 @@ export function SimulationPage({ actions, storeType = 'clothing', restoreState =
   const [chiefCalling, setChiefCalling] = useState(false);
   const [incident, setIncident] = useState(restoreState?.incident || '');
   const [paymentState, setPaymentState] = useState(restoreState?.paymentState || 'Paid');
+  const [activeVoiceSessionId, setActiveVoiceSessionId] = useState(voiceSessionId);
+  const [activeSnapshotId, setActiveSnapshotId] = useState(() => voiceSessionId || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const historyKey = historyOwner ? `crewos:workspace-history:${historyOwner}` : null;
+  const [history, setHistory] = useState(() => {
+    try { const saved = historyKey && JSON.parse(localStorage.getItem(historyKey) || '[]'); return Array.isArray(saved) ? saved : []; } catch { return []; }
+  });
+  const [historyError, setHistoryError] = useState('');
   const timers = useRef([]);
   const listRef = useRef(null);
 
@@ -47,6 +55,25 @@ export function SimulationPage({ actions, storeType = 'clothing', restoreState =
     setIncident('');
     setPaymentState('Paid');
     setChiefCalling(false);
+  }
+
+  function saveSnapshot() {
+    if (working) { setHistoryError('Wait for the current customer response to finish before starting another interview.'); return false; }
+    if (!historyKey) { setHistoryError('Workspace history is unavailable until you sign in.'); return false; }
+    const snapshot = { id: activeSnapshotId, voiceSessionId: activeVoiceSessionId, storeType: selectedStoreType, name: store.name, savedAt: new Date().toISOString(), state: { messages, teamStatus, teamNotes, mode, incident, paymentState } };
+    const next = [snapshot, ...history.filter(item => item.id !== snapshot.id)].slice(0, 50);
+    try { localStorage.setItem(historyKey, JSON.stringify(next)); setHistory(next); setHistoryError(''); return true; }
+    catch { setHistoryError('Could not save this workspace in this browser.'); return false; }
+  }
+  useEffect(() => { onRegisterSnapshot?.(saveSnapshot); return () => onRegisterSnapshot?.(null); });
+
+  function switchSnapshot(snapshot) {
+    if (snapshot.id === activeSnapshotId || !Object.hasOwn(DEMO_STORES, snapshot.storeType) || !saveSnapshot()) return;
+    const saved = snapshot.state || {};
+    setActiveSnapshotId(snapshot.id); setActiveVoiceSessionId(snapshot.voiceSessionId || null); setSelectedStoreType(snapshot.storeType);
+    setMessages(Array.isArray(saved.messages) ? saved.messages : seedMessages(DEMO_STORES[snapshot.storeType]));
+    setTeamStatus(saved.teamStatus || 'Ready for a customer message'); setTeamNotes(Array.isArray(saved.teamNotes) ? saved.teamNotes : []);
+    setMode(saved.mode || 'collaborate'); setIncident(saved.incident || ''); setPaymentState(saved.paymentState || 'Paid'); setChiefCalling(false);
   }
 
   async function respond(text, { major = false } = {}) {
@@ -110,7 +137,9 @@ export function SimulationPage({ actions, storeType = 'clothing', restoreState =
       @media(max-width:850px){.sim-grid{grid-template-columns:1fr}.sim-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.sim-phone{width:min(100%,430px)}}
       @media(max-width:480px){.simulation-page .page-heading{align-items:flex-start}.sim-kpi{padding:13px}.sim-kpi b{font-size:16px}.sim-phone-screen{min-height:570px}.sim-chat{max-height:390px}.sim-employee-state{white-space:normal;text-align:right}}
     `}</style>
-    <Heading title="Your CrewOS workspace" subtitle="Your AI team, store, customer conversations, and payments in one place."><Button kind="btn-primary" onClick={() => actions?.('navigate', 'voice')}>Start another interview</Button></Heading>
+    <Heading title="Your CrewOS workspace" subtitle="Your AI team, store, customer conversations, and payments in one place."><Button kind="btn-primary" disabled={working} onClick={() => actions?.('navigate', 'voice')}>Start another interview</Button></Heading>
+    {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+    {history.length > 0 && <Panel title="Saved workspaces" subtitle="Switch between workspaces saved in this browser."><div className="section-actions">{history.map(item => <Button key={item.id} disabled={working || item.id === activeSnapshotId} onClick={() => switchSnapshot(item)}>{item.name || DEMO_STORES[item.storeType]?.name || 'Workspace'} · {new Date(item.savedAt).toLocaleString()}{item.id === activeSnapshotId ? ' · Current' : ''}</Button>)}</div></Panel>}
     <section className="sim-kpis" aria-label="Workspace summary">
       <article className="sim-kpi"><span>AI employees</span><b>{setupStage < 3 ? 'Setting up…' : '3 ready'}</b><small>Sales · Customer care · Operations</small></article>
       <article className="sim-kpi"><span>Store</span><b>{setupStage < 4 ? 'Setting up…' : store.name}</b><small>{store.domain}</small></article>
@@ -146,9 +175,10 @@ export function SimulationPage({ actions, storeType = 'clothing', restoreState =
 
         <Panel title="Shopify store" subtitle="Products, pricing, and inventory for your storefront.">
           <label className="sim-store-choice">Store<select aria-label="Choose a storefront" value={selectedStoreType} disabled={working} onChange={event => selectStore(event.target.value)}>{Object.values(DEMO_STORES).map(item => <option key={item.id} value={item.id}>{item.name} · {item.category}</option>)}</select></label>
-          <div className="sim-readiness" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, margin: '12px 0 10px' }}><b>{store.name}</b><Badge value="connected">Connected</Badge></div>
+          <div className="sim-readiness" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, margin: '12px 0 10px' }}><b>{store.name}</b><Badge value="draft">Preview</Badge></div>
           <p className="field-hint" style={{ marginTop: 0 }}>{store.domain}</p>
           <div className="sim-product-list">{store.products.map(product => <article className="sim-product" key={product.sku}><div><b>{product.name}</b><span>{product.sku} · {product.stock}</span></div><b className="sim-product-price">{product.price}</b></article>)}</div>
+          <ShopifyLiveConnection key={activeVoiceSessionId || 'without-interview'} voiceSessionId={activeVoiceSessionId} storeName={store.name} category={selectedStoreType} />
         </Panel>
 
         <Panel title="Payments and customer service" subtitle="Payments and customer conversations for your storefront.">
@@ -163,6 +193,6 @@ export function SimulationPage({ actions, storeType = 'clothing', restoreState =
       </div>
     </div>
 
-    {chiefCalling && <div className="sim-modal-scrim" role="presentation"><section className="sim-chief-call" role="dialog" aria-modal="true" aria-labelledby="sim-chief-title"><div className="sim-chief-orb" aria-hidden="true">C</div><h2 id="sim-chief-title">Chief is calling you in CrewOS</h2><p>A high-priority order issue needs your review. Answer with Chief to discuss it by voice.</p><Button kind="btn-primary" onClick={() => { const currentMessage=[...messages].reverse().find(message=>message.from==='customer')?.text||incident; actions?.('start-chief-call',{storeType:selectedStoreType,storeName:store.name,orderId:store.orderId,productName:store.products[0].name,amount:store.products[0].price,issue:currentMessage,returnState:{messages,teamStatus,teamNotes,mode,incident,paymentState}}); }}>Answer Chief’s call</Button> <Button onClick={() => setChiefCalling(false)}>Close</Button></section></div>}
+    {chiefCalling && <div className="sim-modal-scrim" role="presentation"><section className="sim-chief-call" role="dialog" aria-modal="true" aria-labelledby="sim-chief-title"><div className="sim-chief-orb" aria-hidden="true">C</div><h2 id="sim-chief-title">Chief is calling you in CrewOS</h2><p>A high-priority order issue needs your review. Answer with Chief to discuss it by voice.</p><Button kind="btn-primary" onClick={() => { const currentMessage=[...messages].reverse().find(message=>message.from==='customer')?.text||incident; actions?.('start-chief-call',{voiceSessionId:activeVoiceSessionId,storeType:selectedStoreType,storeName:store.name,orderId:store.orderId,productName:store.products[0].name,amount:store.products[0].price,issue:currentMessage,returnState:{messages,teamStatus,teamNotes,mode,incident,paymentState}}); }}>Answer Chief’s call</Button> <Button onClick={() => setChiefCalling(false)}>Close</Button></section></div>}
   </main>;
 }
