@@ -10,6 +10,14 @@ const LOCAL_DEVELOPMENT_ORIGINS = new Set([
   'http://[::1]:5173',
 ]);
 
+// The current public UI is served by Vercel while its API is reverse-proxied
+// to the backend's ngrok origin. Keep this exact-origin fallback so the
+// hackathon deployment works without another backend setting; deployments
+// with a different UI origin should set APP_ALLOWED_ORIGINS explicitly.
+const DEFAULT_ALLOWED_APP_ORIGINS = new Set([
+  'https://crewos-paytm-hack-three.vercel.app',
+]);
+
 function toOrigin(value) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -36,6 +44,12 @@ export function isAllowedAppOrigin(origin, env = process.env, request = null) {
 
   const canonical = toOrigin(env.APP_ORIGIN);
   if (canonical && normalized === canonical) return true;
+
+  const configured = String(env.APP_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(value => toOrigin(value.trim()))
+    .filter(Boolean);
+  if (configured.includes(normalized) || DEFAULT_ALLOWED_APP_ORIGINS.has(normalized)) return true;
 
   if (String(env.NODE_ENV || '').toLowerCase() !== 'production' && LOCAL_DEVELOPMENT_ORIGINS.has(normalized)) return true;
 

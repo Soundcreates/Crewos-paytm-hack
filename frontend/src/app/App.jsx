@@ -7,6 +7,8 @@ import { AppShell } from '../components/AppShell.jsx';
 import { Dialog } from '../components/Dialog.jsx';
 import { Button, Empty, Toast } from '../components/ui.jsx';
 import { AuthView } from '../pages/AuthPage.jsx';
+import { LandingPage } from '../pages/LandingPage.jsx';
+import { isAppHash, navigatePublic, PUBLIC_PATHS, usePublicPage } from '../config/public-routes.jsx';
 const loadPage=(path,name)=>lazy(()=>path().then(module=>({default:module[name]})));
 export function routeLoadingLabel(route) {
   const title = route === 'hire' ? 'Hire employee' : route === 'setup' ? 'Setup'
@@ -45,6 +47,9 @@ export function App() {
   const officeLayout = useRef(null), lastHash = useRef(location.hash), loadedRoute=useRef(null);
   const [viewer,setViewer]=useState(null),[invite,setInvite]=useState(()=>new URLSearchParams(location.search).get('invite'));
   const [chiefPrefill,setChiefPrefill]=useState(null);
+  const publicPage = usePublicPage();
+  const [, setHashTick] = useState(0); // re-render when the hash flips between landing and workspace
+  useEffect(() => { const tick = () => setHashTick((value) => value + 1); window.addEventListener('hashchange', tick); return () => window.removeEventListener('hashchange', tick); }, []);
   const [revision, setRevision] = useState(0), socket = useRef(null), timer = useRef(null), reconnectTimer = useRef(null), toastTimeout = useRef(null), routeRef = useRef(route);
   const notify = useCallback((message, isError = false) => { setToast({ message, error: isError }); clearTimeout(toastTimeout.current); if(!isError) toastTimeout.current = setTimeout(() => setToast(null), 4000); }, []);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -58,10 +63,13 @@ export function App() {
     return { ...current, workflows };
   }), []);
   const consumeTaskToOpen = useCallback(() => setTaskToOpen(null), []);
-  const go = useCallback((next) => { const target = String(next || 'overview'); if(target.split('?')[0]!==routeRef.current && !confirmNavigation())return false; location.hash = ['overview', ''].includes(target) ? '' : target; lastHash.current=location.hash; setRoute(routeNow(pilotMode)); return true; }, [pilotMode]);
+  const go = useCallback((next) => { const target = String(next || 'overview'); if(target.split('?')[0]!==routeRef.current && !confirmNavigation())return false; location.hash = target || 'overview'; lastHash.current=location.hash; setRoute(routeNow(pilotMode)); return true; }, [pilotMode]);
   const updateSession = useCallback(async (nextRoute) => { const current = await api('/api/auth/me'); if(nextRoute==='chief'&&chiefEnabled){location.hash='chief';lastHash.current=location.hash;setRoute('chief');}setSession(current);setInvite(new URLSearchParams(location.search).get('invite'));return current; }, [chiefEnabled]);
 
   useEffect(() => { routeRef.current = route; }, [route]);
+  // Signed-in visitors on /login or /register go straight into the workspace, keeping any hash route.
+  // After signing in from /login or /register, move into the workspace (keeping any deep link).
+  useEffect(() => { if (session?.user && !invite && (publicPage === 'login' || publicPage === 'register')) { if (!isAppHash(location.hash)) history.replaceState(null, '', '/#overview'); navigatePublic('/', { replace: true, keepLocation: true }); setRoute(routeNow(pilotMode)); } }, [session?.user, invite, publicPage, pilotMode]);
   useEffect(() => { const handler = () => {const next=routeNow(pilotMode);if(next!==routeRef.current&&!confirmNavigation()){history.replaceState(null,'',location.pathname+location.search+lastHash.current);return;}lastHash.current=location.hash;setRoute(next);const task=new URLSearchParams(location.hash.split('?')[1]).get('task');if(task)setTaskToOpen(task);}; window.addEventListener('hashchange', handler); return () => window.removeEventListener('hashchange', handler); }, [pilotMode]);
   useEffect(() => {
     let active = true;
@@ -226,9 +234,18 @@ export function App() {
   }
 
   async function changeOrganization(organizationId) { if(!confirmNavigation())return;try { await api('/api/org/switch', { method: 'POST', body: JSON.stringify({ organizationId }) }); await updateSession(); notify('Workspace switched.'); } catch (error) { notify(error.message, true); } }
-  async function logout() { if(!confirmNavigation())return;if (authProvider === 'neon') await neonAuth('sign-out').catch(() => {}); await api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => {}); socket.current?.close(); setSession(null); setData(null); }
+  async function logout() { if(!confirmNavigation())return;if (authProvider === 'neon') await neonAuth('sign-out').catch(() => {}); await api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => {}); socket.current?.close(); setSession(null); setData(null); lastHash.current=''; navigatePublic(PUBLIC_PATHS.landing, { replace: true }); setRoute(routeNow(pilotMode)); }
   function retryStartup() { setError(''); setSessionLoading(true); setBootstrapAttempt((attempt) => attempt + 1); }
 
+  const signedIn = Boolean(session?.user);
+  // "/" is the public landing page unless the visitor is signed in or following a workspace deep link.
+  // "/" and "/landing" are public for everyone; a workspace hash ("/#tasks") opens the app or sign-in.
+  const showLanding = !invite && publicPage === 'landing' && !isAppHash(location.hash);
+  useEffect(() => {
+    document.title = showLanding ? 'CrewOS · AI employees for founders'
+      : !signedIn || invite ? (publicPage === 'register' && !invite ? 'Create your workspace · CrewOS' : 'Sign in · CrewOS')
+        : 'CrewOS · AI employee workspace';
+  }, [showLanding, signedIn, invite, publicPage]);
   let page = null;
   if (data) {
     if (route === 'overview') page = <Overview data={data} session={session} actions={act} refresh={refresh}/>;
@@ -251,8 +268,9 @@ export function App() {
     else if (route === 'reports') page = <ReportsPage data={data} session={session} actions={act}/>;
     else if (route === 'settings') page = <SettingsPage data={data} session={session} actions={act} notify={notify} refresh={refresh} updateSession={updateSession}/>;
   }
+  if (showLanding) return <><LandingPage signedIn={signedIn}/><Toast toast={toast} onClose={()=>setToast(null)}/></>;
   if (sessionLoading) return <main className="boot-screen" role="status" aria-live="polite"><div className="boot-mark" aria-hidden="true">C<span>•</span></div><p>Connecting to your workspace…</p><div className="boot-progress" aria-hidden="true"/></main>;
   if (error && !session) return <main className="boot-failure"><section className="boot-failure-card" role="alert"><div className="boot-mark" aria-hidden="true">C<span>•</span></div><h1>Couldn’t reach CrewOS</h1><p>{error}</p><Button kind="btn-primary" onClick={retryStartup}>Retry connection</Button></section></main>;
-  if (!session?.user || invite) return <><AuthView invite={invite} signedIn={session?.user} authProvider={authProvider} onComplete={updateSession} notify={notify}/><Toast toast={toast} onClose={()=>setToast(null)}/></>;
+  if (!session?.user || invite) return <><AuthView invite={invite} page={publicPage} signedIn={session?.user} authProvider={authProvider} onComplete={updateSession} notify={notify}/><Toast toast={toast} onClose={()=>setToast(null)}/></>;
   return <><AppShell session={session} route={route} go={go} actions={act} clock={clock} refresh={refresh} theme={theme} onToggleTheme={toggleTheme} onOrgChange={changeOrganization} onLogout={logout} liveState={liveState} pilotMode={pilotMode}>{loading || loadedRoute.current!==route+'|'+session.organization.id ? <div className="loading-line" role="status" aria-label={routeLoadingLabel(route)}/> : error ? <div className="panel"><Empty icon="!" title="Could not load this view">{error} <Button onClick={() => { setError(''); refresh(); }}>Try again</Button></Empty></div> : <ViewBoundary key={route+session.organization.id}><Suspense fallback={<div className="loading-line" role="status" aria-label={routeLoadingLabel(route)}/>}>{page}</Suspense></ViewBoundary>}</AppShell><LiveViewer viewer={viewer} onClose={()=>setViewer(null)}/><OperationsTray/><Dialog dialog={dialog} session={session} onClose={() => setDialog(null)} onSubmit={submitDialog} busy={dialogBusy}/><Toast toast={toast} onClose={()=>setToast(null)}/></>;
 }

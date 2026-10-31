@@ -275,9 +275,9 @@ export function createSarvamVoiceV2Controller({
     }
     const [sarvamOrgId, workspaceId, appId] = match.slice(1);
     const interactionType = requestUrl.searchParams.get('interaction_type');
-    // SDK 0.0.42 serializes InteractionType.CALL as `call`; the provider runtime
-    // request below is deliberately canonicalized to `CALL`.
-    if (interactionType !== 'call' && interactionType !== 'CALL') fail(HttpError, 400, 'Sarvam SDK interaction_type must be CALL.', 'sarvam_proxy_query_invalid');
+    // SDK 0.0.42 serializes InteractionType.CALL as `call`. Keep accepting the
+    // earlier uppercase form, but preserve the SDK's canonical value upstream.
+    if (interactionType !== 'call' && interactionType !== 'CALL') fail(HttpError, 400, 'Sarvam SDK interaction_type must be call.', 'sarvam_proxy_query_invalid');
     const sessionToken = parseCookie(request.headers.cookie || '', VOICE_COOKIE);
     if (!sessionToken) fail(HttpError, 401, 'A current browser voice session is required.', 'voice_session_required');
     const session = await repository.findBrowserSessionByToken(org.id, context.user.id, digest(sessionToken));
@@ -319,12 +319,16 @@ export function createSarvamVoiceV2Controller({
         const apiKey = await liveCredentialResolver.resolve({ orgId: org.id, connectionId: connection.id, providerAccountId: connection.provider_account_id, environment: connection.environment });
         if (typeof apiKey !== 'string' || apiKey.length < 8) fail(HttpError, 503, 'Encrypted Sarvam credentials are unavailable.', 'sarvam_credentials_unavailable');
         const target = new URL(`${API_RUNTIME_ORIGIN}${API_RUNTIME_PATH}/orgs/${encodeURIComponent(session.sarvam_org_id)}/workspaces/${encodeURIComponent(session.workspace_id)}/apps/${encodeURIComponent(session.app_id)}/url`);
-        target.searchParams.set('interaction_type', 'CALL');
+        target.searchParams.set('interaction_type', 'call');
         target.searchParams.set('version', String(session.app_version));
         target.searchParams.set('user_identifier', context.user.id);
         if (userIdentifierType) target.searchParams.set('user_identifier_type', userIdentifierType);
         const response = await proxyTransport.get(target.toString(), { headers: { 'X-API-Key': apiKey, Accept: 'application/json' }, redirect: 'error' });
-        if (!response || response.ok !== true) fail(HttpError, 502, 'Sarvam app runtime could not issue a temporary voice URL.', 'sarvam_proxy_upstream_failed');
+        if (!response || response.ok !== true) {
+          const upstreamStatus = Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599 ? response.status : null;
+          try { logger({ event: 'sarvam.proxy.upstream_failed', upstreamStatus }); } catch { /* Diagnostics must not affect URL issuance. */ }
+          fail(HttpError, 502, 'Sarvam app runtime could not issue a temporary voice URL.', 'sarvam_proxy_upstream_failed');
+        }
         payload = typeof response.json === 'function' ? await response.json() : response.data;
       }
       if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.url !== 'string' || typeof payload.reference_id !== 'string' || !ID_PATTERN.test(payload.reference_id)) {

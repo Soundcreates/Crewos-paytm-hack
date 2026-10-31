@@ -17,7 +17,7 @@ function responseCapture() {
   return { status: null, body: null, headers: {}, writeHead(status, headers = {}) { this.status = status; Object.assign(this.headers, headers); }, end(body = '') { this.rawBody = body; } };
 }
 
-function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = true, pilot = false, callbackVerifier = 'derived', proxyResponse, onboardingService } = {}) {
+function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = true, pilot = false, callbackVerifier = 'derived', proxyResponse, proxyStatus = 200, onboardingService } = {}) {
   const env = {
     NODE_ENV: 'test', APP_ORIGIN: 'https://crewos.example.test',
     CREWOS_ORG_ENGINE_V2: v2Enabled ? 'true' : 'false', CREWOS_ORG_ENGINE_V2_ORGS: v2Enabled ? ORG : '',
@@ -26,7 +26,7 @@ function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = 
     CREWOS_LOCAL_WEBHOOK_FIXTURE_SECRET: fixtureEnabled ? FIXTURE_SECRET : '',
   };
   const state = {
-    connections: new Map(), sessions: new Map(), callbacks: new Set(), outcomes: [], proxyCalls: [], onboardingTurns: [],
+    connections: new Map(), sessions: new Map(), callbacks: new Set(), outcomes: [], proxyCalls: [], onboardingTurns: [], logs: [],
     effectCalls: 0, transactionCalls: 0, attemptLookups: 0, transactionSawVerifiedAttemptLookup: false,
     task: { id: 'task_voice_test', org_id: ORG, state: 'queued' },
     onboarding: { id: 'onboarding_voice_test', org_id: ORG, state: 'collecting', current_profile_version: 0 },
@@ -118,7 +118,7 @@ function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = 
   const proxyTransport = {
     async get(url, options) {
       state.proxyCalls.push({ url, headers: { ...options.headers }, redirect: options.redirect });
-      return { ok: true, data: proxyResponse || { url: 'wss://voice.sarvam.ai/one-use?token=fixture-capability', reference_id: 'reference_fixture_1' } };
+      return { ok: proxyStatus >= 200 && proxyStatus < 300, status: proxyStatus, data: proxyResponse || { url: 'wss://voice.sarvam.ai/one-use?token=fixture-capability', reference_id: 'reference_fixture_1' } };
     },
   };
   const onboarding = onboardingService || {
@@ -138,7 +138,7 @@ function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = 
     newId: prefix => `${prefix}_fixture_${state.sessions.size + state.connections.size + state.callbacks.size + 1}`,
     timestamp: () => NOW,
     transaction: async operation => { state.transactionCalls += 1; state.transactionSawVerifiedAttemptLookup ||= state.attemptLookups > 0; return operation(); },
-    env, pilotMode: () => pilot, proxyTransport, logger: () => { throw new Error('unexpected log'); },
+    env, pilotMode: () => pilot, proxyTransport, logger: record => state.logs.push(record),
   });
   const context = { org: { id: ORG, role: 'manager' }, user: { id: USER } };
   const call = async ({ path, method = 'GET', body = {}, request = {} } = {}) => {
@@ -213,7 +213,7 @@ test('exact SDK proxy path pins path/query, replaces browser API key, and return
   const call = harness.state.proxyCalls[0];
   const target = new URL(call.url);
   assert.equal(`${target.origin}${target.pathname}`, `https://apps.sarvam.ai/api/app-runtime/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url`);
-  assert.equal(target.searchParams.get('interaction_type'), 'CALL');
+  assert.equal(target.searchParams.get('interaction_type'), 'call');
   assert.equal(target.searchParams.get('version'), '4');
   assert.equal(target.searchParams.get('user_identifier'), USER);
   assert.equal(call.headers['X-API-Key'], 'fixture-api-key-not-real');
@@ -249,6 +249,21 @@ test('proxy rejects unsafe provider URL without returning it or recording the si
   const base = `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url`;
   await assert.rejects(harness.call({ path: base, request: { url: `${base}?interaction_type=CALL`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie } } }), error => error.code === 'sarvam_proxy_response_invalid');
   assert.equal(harness.state.sessions.values().next().value.reference_id, undefined);
+});
+
+test('proxy records only upstream HTTP status for failed signed URL requests', async () => {
+  const harness = makeHarness({
+    liveEnabled: true,
+    proxyStatus: 400,
+    proxyResponse: { error: 'provider detail', url: 'wss://voice.sarvam.ai/private-signed-url', apiKey: 'provider-secret' },
+  });
+  const { cookie } = await setupLiveBrowserSession(harness);
+  const base = `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url`;
+  await assert.rejects(harness.call({ path: base, request: { url: `${base}?interaction_type=call`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie } } }), error => error.code === 'sarvam_proxy_upstream_failed');
+  assert.deepEqual(harness.state.logs, [{ event: 'sarvam.proxy.upstream_failed', upstreamStatus: 400 }]);
+  assert.equal(JSON.stringify(harness.state.logs).includes('provider detail'), false);
+  assert.equal(JSON.stringify(harness.state.logs).includes('private-signed-url'), false);
+  assert.equal(JSON.stringify(harness.state.logs).includes('provider-secret'), false);
 });
 
 test('browser transcript goes through Onboarding V2 with role labels, stable replay hash, and no confirmed claims', async () => {

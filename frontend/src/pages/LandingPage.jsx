@@ -158,7 +158,7 @@ function FirstTenDays() {
   return <section className="lp-section lp-week" id="first-days" aria-labelledby="week-title">
     <div className="lp-week-intro">
       <Eyebrow>A store’s first ten days</Eyebrow>
-      <h2 id="week-title">Watch one store go from a phone call to repeat customers.</h2>
+      <h2 id="week-title" tabIndex={-1}>Watch one store go from a phone call to repeat customers.</h2>
     </div>
     <div className="lp-week-stage">
       <div className="lp-week-copy" key={day.key + '-copy'}>
@@ -174,13 +174,14 @@ function FirstTenDays() {
     <div className="lp-week-bar">
       <p className="lp-caps" aria-hidden="true">Example store · Kiln &amp; Co.</p>
       <div className="lp-week-tabs" role="tablist" aria-label="Choose a day" onKeyDown={onKeyDown}>
-        {DAYS.map((item, index) => <button key={item.key} ref={(node) => { tabs.current[index] = node; }} type="button" role="tab" id={'day-tab-' + item.key} aria-controls={'day-panel-' + item.key} aria-selected={index === active} tabIndex={index === active ? 0 : -1} className={index === active ? 'active' : ''} onClick={() => setActive(index)}><span className="lp-tab-day">{item.day}</span>{item.tab}</button>)}
+        {DAYS.map((item, index) => <button key={item.key} ref={(node) => { tabs.current[index] = node; }} type="button" role="tab" id={'day-tab-' + item.key} aria-controls={'day-panel-' + item.key} aria-selected={index === active} tabIndex={index === active ? 0 : -1} className={index === active ? 'active' : ''} onClick={() => setActive(index)}><span className="lp-tab-day">{item.day}</span> {item.tab}</button>)}
       </div>
     </div>
   </section>;
 }
 
-function Actions({ align = 'center' }) {
+function Actions({ align = 'center', signedIn = false }) {
+  if (signedIn) return <div className={'lp-actions ' + align}><a href={PUBLIC_PATHS.workspace} className="lp-btn lp-btn-ink">Open your workspace</a></div>;
   return <div className={'lp-actions ' + align}>
     <PublicLink to={PUBLIC_PATHS.register} className="lp-btn lp-btn-ink">Create your workspace</PublicLink>
     <PublicLink to={PUBLIC_PATHS.login} className="lp-btn lp-btn-line">Sign in</PublicLink>
@@ -189,7 +190,7 @@ function Actions({ align = 'center' }) {
 
 const SECTION_LINKS = [['product', 'How it works'], ['first-days', 'First ten days'], ['guardrails', 'Guardrails']];
 
-export function LandingPage() {
+export function LandingPage({ signedIn = false }) {
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const update = () => setScrolled(window.scrollY > 12);
@@ -205,7 +206,7 @@ export function LandingPage() {
     if (!target) return;
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     target.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
-    target.querySelector('h2')?.focus({ preventScroll: true });
+    (target.tagName === 'MAIN' ? target : target.querySelector('h2'))?.focus({ preventScroll: true });
   }
   return <div className="lp">
     <a className="lp-skip" href="#lp-main" onClick={(event) => jump(event, 'lp-main')}>Skip to content</a>
@@ -214,13 +215,15 @@ export function LandingPage() {
         <CrewWordmark/>
         <nav aria-label="Sections" className="lp-nav-links">{SECTION_LINKS.map(([id, label]) => <a key={id} href={'#' + id} onClick={(event) => jump(event, id)}>{label}</a>)}</nav>
         <div className="lp-nav-actions">
-          <PublicLink to={PUBLIC_PATHS.login} className="lp-nav-signin">Sign in</PublicLink>
-          <PublicLink to={PUBLIC_PATHS.register} className="lp-btn lp-btn-ink lp-btn-small">Create workspace</PublicLink>
+          {signedIn ? <a href={PUBLIC_PATHS.workspace} className="lp-btn lp-btn-ink lp-btn-small">Open workspace</a> : <>
+            <PublicLink to={PUBLIC_PATHS.login} className="lp-nav-signin">Sign in</PublicLink>
+            <PublicLink to={PUBLIC_PATHS.register} className="lp-btn lp-btn-ink lp-btn-small">Create workspace</PublicLink>
+          </>}
         </div>
       </div>
     </header>
 
-    <main id="lp-main">
+    <main id="lp-main" tabIndex={-1}>
       <section className="lp-hero" aria-labelledby="hero-title">
         <div className="lp-aura" aria-hidden="true"/>
         <div className="lp-hero-inner">
@@ -228,7 +231,7 @@ export function LandingPage() {
           <Eyebrow>AI employees for founders</Eyebrow>
           <h1 id="hero-title">Your AI company,<br/>staffed in one call.</h1>
           <p className="lp-lede">Hire, test and run an AI team — engineering, support and sales — while you keep the keys.</p>
-          <Actions/>
+          <Actions signedIn={signedIn}/>
           <p className="lp-caps lp-audience">Built for solo founders · D2C brands · small teams</p>
         </div>
       </section>
@@ -276,7 +279,7 @@ export function LandingPage() {
           <div className="lp-hero-tile"><CrewMark/></div>
           <h2 id="close-title">Hire your AI company.</h2>
           <p className="lp-lede">Start with one call to Chief. You approve every hire, and every action that matters.</p>
-          <Actions/>
+          <Actions signedIn={signedIn}/>
         </div>
       </section>
     </main>
@@ -284,7 +287,7 @@ export function LandingPage() {
     <footer className="lp-footer">
       <CrewWordmark/>
       <p>AI employees for founders · © 2026 CribDevs</p>
-      <nav aria-label="Account"><PublicLink to={PUBLIC_PATHS.login}>Sign in</PublicLink><PublicLink to={PUBLIC_PATHS.register}>Create workspace</PublicLink></nav>
+      <nav aria-label="Account">{signedIn ? <a href={PUBLIC_PATHS.workspace}>Open workspace</a> : <><PublicLink to={PUBLIC_PATHS.login}>Sign in</PublicLink><PublicLink to={PUBLIC_PATHS.register}>Create workspace</PublicLink></>}</nav>
     </footer>
   </div>;
 }

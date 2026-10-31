@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api",
+      "destination": "https://kisha-volcanologic-motherly.ngrok-free.dev/api"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://kisha-volcanologic-motherly.ngrok-free.dev/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
