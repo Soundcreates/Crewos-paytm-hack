@@ -161,6 +161,7 @@ export function createSarvamVoiceV2Controller({
   parseCookie = defaultParseCookie,
   proxyTransport = null,
   liveCredentialResolver = credentialService,
+  askChief = null,
   logger = () => {},
 }) {
   if (!repository || typeof requireRole !== 'function' || typeof sendJson !== 'function' || typeof newId !== 'function' || typeof timestamp !== 'function') {
@@ -213,8 +214,8 @@ export function createSarvamVoiceV2Controller({
       outbound: { enabled: false, status: 'callback_verifier_required' },
       callbacks: { liveVerified: false, status: 'supported_verifier_or_trusted_ingress_required' },
       fetchCallContext: { enabled: true, method: 'POST', path: '/api/sarvam/v2/tools/fetch-call-context', status: 'read_only_session_capability' },
-      voiceIntent: { enabled: false, status: 'trusted_voice_tool_session_binding_unavailable' },
-      askChief: { enabled: false, status: 'trusted_voice_tool_session_binding_unavailable' },
+      voiceIntent: { enabled: true, status: 'session_proposal_only' },
+      askChief: { enabled: typeof askChief === 'function', status: 'session_capability' },
       protectedActionsExecutedByVoice: false,
     };
   }
@@ -479,7 +480,9 @@ export function createSarvamVoiceV2Controller({
       });
       for (const [key, value] of callContextCapabilities) if (Date.parse(value.expiresAt) <= Date.parse(at)) callContextCapabilities.delete(key);
       while (callContextCapabilities.size >= 500) callContextCapabilities.delete(callContextCapabilities.keys().next().value);
-      callContextCapabilities.set(sessionId, { orgId: org.id, tokenHash: digest(contextCapability), expiresAt: created.expires_at });
+      const incident = body.incident && typeof body.incident === 'object' && !Array.isArray(body.incident)
+        ? Object.fromEntries(['store', 'order', 'item', 'amount', 'customerIssue'].map(key => [key, String(body.incident[key] || '').slice(0, key === 'customerIssue' ? 400 : 120)])) : null;
+      callContextCapabilities.set(sessionId, { orgId: org.id, tokenHash: digest(contextCapability), expiresAt: created.expires_at, incident, decisions: [] });
       return sendJson(response, 201, {
         voiceSessionId: sessionId,
         state: created.state,
@@ -495,7 +498,7 @@ export function createSarvamVoiceV2Controller({
     if (sessionRoute && method === 'GET') {
       const status = await repository.getVoiceSessionStatus(org.id, sessionRoute[1], user.id);
       if (!status) fail(HttpError, 404, 'Voice session was not found.', 'voice_session_not_found');
-      return sendJson(response, 200, { ...status, transcriptConsent: Boolean((await repository.findVoiceSessionByOrgAndId(org.id, status.voice_session_id))?.transcript_consent_status === 'granted') });
+      return sendJson(response, 200, { ...status, decisionProposals: callContextCapabilities.get(status.voice_session_id)?.decisions || [], transcriptConsent: Boolean((await repository.findVoiceSessionByOrgAndId(org.id, status.voice_session_id))?.transcript_consent_status === 'granted') });
     }
     if (sessionRoute && method === 'DELETE') {
       const result = await repository.endVoiceSession(org.id, sessionRoute[1], user.id, timestamp());
@@ -525,8 +528,9 @@ export function createSarvamVoiceV2Controller({
   }
 
   async function handleToolRequest({ path, method, request, response, body = {} }) {
-    if (path !== '/api/sarvam/v2/tools/fetch-call-context') return false;
-    if (method !== 'POST') fail(HttpError, 405, 'fetch_call_context accepts POST only.', 'method_not_allowed');
+    const tool = ({ '/api/sarvam/v2/tools/fetch-call-context': 'context', '/api/sarvam/v2/tools/fetch_call_context': 'context', '/api/sarvam/v2/tools/ask-chief': 'ask', '/api/sarvam/v2/tools/ask_chief': 'ask', '/api/sarvam/v2/tools/submit-decision': 'decision', '/api/sarvam/v2/tools/submit_decision': 'decision' })[path];
+    if (!tool) return false;
+    if (method !== 'POST') fail(HttpError, 405, 'Voice tools accept POST only.', 'method_not_allowed');
     if (!body || typeof body !== 'object' || Array.isArray(body)) fail(HttpError, 400, 'Tool arguments must be a JSON object.', 'voice_tool_request_invalid');
     const args = body.arguments && typeof body.arguments === 'object' && !Array.isArray(body.arguments)
       ? body.arguments : body.parameters && typeof body.parameters === 'object' && !Array.isArray(body.parameters) ? body.parameters : body;
@@ -534,7 +538,7 @@ export function createSarvamVoiceV2Controller({
     const supplied = String(args.context_token || request?.headers?.authorization?.replace(/^Bearer\s+/i, '') || '');
     const capability = callContextCapabilities.get(sessionId);
     if (!capability || Date.parse(capability.expiresAt) <= Date.parse(timestamp()) || !supplied || !/^[A-Za-z0-9_-]{40,80}$/.test(supplied)) {
-      callContextCapabilities.delete(sessionId);
+      if (capability && Date.parse(capability.expiresAt) <= Date.parse(timestamp())) callContextCapabilities.delete(sessionId);
       fail(HttpError, 401, 'This read-only context capability is missing or expired. Start a new Chief voice interview.', 'voice_context_capability_invalid');
     }
     const actualHash = Buffer.from(digest(supplied), 'hex');
@@ -558,6 +562,23 @@ export function createSarvamVoiceV2Controller({
     }
     const onboarding = session.onboarding_session_id ? await onboardingService?.get(capability.orgId, session.onboarding_session_id) : null;
     const profile = onboarding?.profile || {};
+    if (tool === 'decision') {
+      const decision = String(args.decision || '').trim().toLowerCase();
+      if (!['approved', 'rejected', 'approve', 'reject', 'more_information', 'unclear'].includes(decision)) fail(HttpError, 400, 'Choose approved, rejected, more_information, or unclear.', 'voice_decision_invalid');
+      const notes = String(args.notes || '').trim().slice(0, 2000);
+      const proposal = { decision, notes, recordedAt: timestamp(), proposalOnly: true };
+      if (capability.decisions.length >= 20) fail(HttpError, 429, 'The session decision limit was reached.', 'voice_decision_limit');
+      capability.decisions.push(proposal);
+      return sendJson(response, 200, { recorded: true, storage: 'active_voice_session', ...proposal, actionExecuted: false }, { 'cache-control': 'no-store' });
+    }
+    if (tool === 'ask') {
+      const question = String(args.question || '').trim();
+      if (!question || question.length > 2000) fail(HttpError, 400, 'Provide a question of up to 2000 characters.', 'voice_question_invalid');
+      if (typeof askChief !== 'function') fail(HttpError, 503, 'Chief is unavailable.', 'voice_chief_unavailable');
+      const answer = await askChief({ orgId: capability.orgId, question, incident: capability.incident, profile });
+      if (typeof answer !== 'string' || !answer.trim()) fail(HttpError, 503, 'Chief could not answer right now.', 'voice_chief_unavailable');
+      return sendJson(response, 200, { answer: answer.trim().slice(0, 4000), actionExecuted: false }, { 'cache-control': 'no-store' });
+    }
     const business = profile.business || {};
     const products = Array.isArray(profile.products) ? profile.products.slice(0, 10).map(product => ({
       name: String(product?.title || '').slice(0, 120),
@@ -570,9 +591,10 @@ export function createSarvamVoiceV2Controller({
     return sendJson(response, 200, {
       mode: 'simulation',
       source: 'crewos_read_only_voice_context',
+      incident: capability.incident,
       onboarding: { state: onboarding?.session?.state || 'collecting', business: {
-        name: String(business.name || 'Northstar Supply').slice(0, 120),
-        description: String(business.description || 'A demo outdoor-goods shop used to show the CrewOS workflow.').slice(0, 500),
+        name: String(business.name || '').slice(0, 120),
+        description: String(business.description || '').slice(0, 500),
         targetAudiences: Array.isArray(business.targetAudiences) ? business.targetAudiences.slice(0, 8).map(value => String(value).slice(0, 100)) : [],
         products,
       } },
@@ -581,11 +603,8 @@ export function createSarvamVoiceV2Controller({
         { name: 'Avery Patel', role: 'Customer care', capabilities: ['review delivery and product issues'], state: 'simulated_ready' },
         { name: 'Jordan Lee', role: 'Operations', capabilities: ['flag payment concerns for manager review'], state: 'simulated_ready' },
       ],
-      store: { name: 'Northstar Supply', domain: 'northstar-demo.myshopify.com', state: 'simulated_ready', catalogProducts: 3 },
-      recentActivity: [
-        { type: 'paid_order', id: 'NS-1042', amount: '$64.99', state: 'paid_simulated' },
-        { type: 'customer_message', channel: 'WhatsApp', text: 'Is the Everyday Pack available?', state: 'answered_simulated' },
-      ],
+      store: capability.incident?.store ? { name: capability.incident.store, state: 'simulated_ready' } : null,
+      recentActivity: capability.incident ? [{ type: 'customer_report', order: capability.incident.order, amount: capability.incident.amount, text: capability.incident.customerIssue }] : [],
       customerService: { channel: 'Twilio', state: 'simulated_only', messagesOrCallsSent: false },
       nextStep: 'The sales employee answers the customer. It may ask Customer care to review a delivery or product issue. Major payment concerns are paused for manager review; Chief escalates inside CrewOS only.',
       externalEffects: false,

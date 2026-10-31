@@ -17,7 +17,7 @@ function responseCapture() {
   return { status: null, body: null, headers: {}, writeHead(status, headers = {}) { this.status = status; Object.assign(this.headers, headers); }, end(body = '') { this.rawBody = body; } };
 }
 
-function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = true, pilot = false, callbackVerifier = 'derived', proxyResponse, proxyStatus = 200, onboardingService } = {}) {
+function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = true, pilot = false, callbackVerifier = 'derived', proxyResponse, proxyStatus = 200, onboardingService, askChief } = {}) {
   const env = {
     NODE_ENV: 'test', APP_ORIGIN: 'https://crewos.example.test',
     CREWOS_ORG_ENGINE_V2: v2Enabled ? 'true' : 'false', CREWOS_ORG_ENGINE_V2_ORGS: v2Enabled ? ORG : '',
@@ -129,7 +129,7 @@ function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = 
     },
   };
   const controller = createSarvamVoiceV2Controller({
-    repository, credentialService, onboardingService: onboarding, HttpError,
+    repository, credentialService, onboardingService: onboarding, askChief, HttpError,
     requireRole(context, role) {
       if (!context || !context.org || !context.user) throw new HttpError(401, 'Sign in to continue.', 'unauthorized');
       if (role === 'manager' && !['manager', 'admin', 'owner'].includes(context.org.role)) throw new HttpError(403, 'Manager access required.', 'forbidden');
@@ -240,7 +240,7 @@ test('fetch_call_context is read-only and requires the active browser session ca
   assert.equal(handled, true);
   assert.equal(response.status, 200);
   assert.equal(response.body.mode, 'simulation');
-  assert.equal(response.body.store.domain, 'northstar-demo.myshopify.com');
+  assert.equal(response.body.store, null);
   assert.equal(response.body.customerService.messagesOrCallsSent, false);
   assert.equal(response.body.externalEffects, false);
   assert.equal(JSON.stringify(response.body).includes(session.response.body.contextCapability), false);
@@ -254,6 +254,22 @@ test('fetch_call_context is read-only and requires the active browser session ca
     path: '/api/sarvam/v2/tools/fetch-call-context', method: 'POST', request: { headers: {} }, response: responseCapture(),
     body: { voice_session_id: voiceSessionId, context_token: session.response.body.contextCapability },
   }), error => error.code === 'voice_context_capability_invalid');
+});
+
+test('voice tools require the session capability and keep spoken decisions as session proposals', async () => {
+  const harness = makeHarness({ liveEnabled: true, askChief: async ({ question }) => `Chief: ${question}` });
+  const { voiceSessionId, cookie, session } = await setupLiveBrowserSession(harness);
+  const proxyPath = `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url`;
+  await harness.call({ path: proxyPath, request: { url: `${proxyPath}?interaction_type=call&version=4&user_identifier=${USER}`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie } } });
+  const args = { voice_session_id: voiceSessionId, context_token: session.response.body.contextCapability };
+  const invoke = async (path, body) => { const response = responseCapture(); await harness.controller.handleToolRequest({ path, method: 'POST', request: { headers: {} }, response, body }); return response; };
+  assert.equal((await invoke('/api/sarvam/v2/tools/ask-chief', { ...args, question: 'What happened?' })).body.answer, 'Chief: What happened?');
+  const proposed = (await invoke('/api/sarvam/v2/tools/submit-decision', { ...args, decision: 'approved', notes: 'Review first' })).body;
+  assert.equal(proposed.proposalOnly, true);
+  assert.equal(proposed.actionExecuted, false);
+  assert.equal((await harness.call({ path: `/api/sarvam/v2/sessions/${voiceSessionId}` })).response.body.decisionProposals.length, 1);
+  await assert.rejects(invoke('/api/sarvam/v2/tools/submit-decision', { ...args, context_token: 'x'.repeat(48), decision: 'approved' }), error => error.code === 'voice_context_capability_invalid');
+  assert.equal(harness.state.effectCalls, 0);
 });
 
 test('proxy rejects cross-origin, malformed path/query, mismatched app, and replay before transport', async () => {

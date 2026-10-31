@@ -131,7 +131,14 @@ Request JSON schema:
 }
 ```
 
-The endpoint accepts the arguments directly or under `arguments` / `parameters`. It returns a bounded onboarding summary and the simulated Northstar employees, Shopify store, paid order, WhatsApp message, and Twilio state. The capability is bound to the org and active browser voice session, expires with that session, and is held in backend memory; a backend restart invalidates it, so start a new voice session. The tool is read-only and always reports `externalEffects: false`. Do not configure `ask-chief`, decision, or approval tools; those actions remain unavailable and require manager review.
+The endpoint accepts the arguments directly or under `arguments` / `parameters`. It returns bounded onboarding data and the current simulated incident when present. The capability is bound to the org and active browser voice session, expires with that session, and is held in backend memory; a backend restart invalidates it, so start a new voice session.
+
+Two additional POST tools use the same `voice_session_id` and `context_token` arguments:
+
+- `/api/sarvam/v2/tools/ask-chief` additionally accepts `question` and returns `answer`; it requires the configured CrewOS LLM provider.
+- `/api/sarvam/v2/tools/submit-decision` additionally accepts `decision` (`approved`, `rejected`, `more_information`, or `unclear`) and optional `notes`. It records a proposal in the active server session. The authenticated browser retrieves it before ending the call; it is not a durable approval and does not execute an action.
+
+In Sarvam, map the session arguments to agent variables `crewos_voice_session_id` and `crewos_context_token`. Dashboard tests outside an active CrewOS browser call cannot supply a valid session capability.
 
 ## Verification handoff
 
