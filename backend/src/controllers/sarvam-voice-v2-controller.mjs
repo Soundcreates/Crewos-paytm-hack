@@ -2,6 +2,7 @@ import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypt
 import { createSarvamVoiceSessionService } from '../services/sarvam-voice-session.mjs';
 import { normalizeSarvamCallback } from '../integrations/sarvam-voice.mjs';
 import { organizationEngineV2Status } from '../services/feature-flags.mjs';
+import { expectedAppOrigin, isAllowedAppOrigin } from '../utils/origin-policy.mjs';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const API_RUNTIME_ORIGIN = 'https://apps.sarvam.ai';
@@ -232,11 +233,12 @@ export function createSarvamVoiceV2Controller({
 
   function assertSameOrigin(request) {
     const origin = request.headers.origin;
-    const expectedOrigin = env.APP_ORIGIN ? new URL(env.APP_ORIGIN).origin : `${request.socket?.encrypted ? 'https' : 'http'}://${request.headers.host || 'localhost'}`;
+    const expectedOrigin = expectedAppOrigin(request, env);
     if (origin) {
       let normalized;
       try { normalized = new URL(origin).origin; } catch { fail(HttpError, 403, 'Sarvam proxy requests must be same-origin.', 'sarvam_origin_blocked'); }
-      if (normalized !== expectedOrigin) fail(HttpError, 403, 'Sarvam proxy requests must be same-origin.', 'sarvam_origin_blocked');
+      if (!isAllowedAppOrigin(origin, env, request)) fail(HttpError, 403, 'Sarvam proxy requests must be same-origin.', 'sarvam_origin_blocked');
+      return normalized;
     } else if (request.headers['sec-fetch-site'] !== 'same-origin') {
       fail(HttpError, 403, 'Sarvam proxy requests must prove same-origin browser context.', 'sarvam_origin_blocked');
     }
@@ -273,7 +275,9 @@ export function createSarvamVoiceV2Controller({
     }
     const [sarvamOrgId, workspaceId, appId] = match.slice(1);
     const interactionType = requestUrl.searchParams.get('interaction_type');
-    if (interactionType !== 'CALL') fail(HttpError, 400, 'Sarvam SDK interaction_type must be CALL.', 'sarvam_proxy_query_invalid');
+    // SDK 0.0.42 serializes InteractionType.CALL as `call`; the provider runtime
+    // request below is deliberately canonicalized to `CALL`.
+    if (interactionType !== 'call' && interactionType !== 'CALL') fail(HttpError, 400, 'Sarvam SDK interaction_type must be CALL.', 'sarvam_proxy_query_invalid');
     const sessionToken = parseCookie(request.headers.cookie || '', VOICE_COOKIE);
     if (!sessionToken) fail(HttpError, 401, 'A current browser voice session is required.', 'voice_session_required');
     const session = await repository.findBrowserSessionByToken(org.id, context.user.id, digest(sessionToken));

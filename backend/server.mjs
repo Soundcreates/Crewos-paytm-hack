@@ -53,6 +53,7 @@ import { reactApprovalRequest, runReActWorkflow } from './workflows/langgraph/ru
 import { safeTaskTraceValue } from './workflows/trace-sanitizer.mjs';
 import { getWorkflowSnapshot, persistWorkflowSnapshot } from './workflows/snapshot-store.mjs';
 import { HttpError } from './src/utils/errors.mjs';
+import { isAllowedAppOrigin } from './src/utils/origin-policy.mjs';
 import { appendSetCookies, parseCookie, parseNamedCookie, requestCookiePresence } from './src/utils/cookies.mjs';
 import { readBody as parseJsonBody, readRawBody as readRequestBody, sendJson as writeJson } from './src/utils/http.mjs';
 import { cleanString, isDuplicateSignupEmail, normalizeEmail, optionalTimestamp, parseJson, sha, validateOrgName } from './src/utils/values.mjs';
@@ -601,18 +602,10 @@ function cookieHeader(token, maxAge = SESSION_DAYS * 86400, req) {
   return `${APP_SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
 function sameOrigin(req, origin) {
-  try {
-    const expected = process.env.APP_ORIGIN || `${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host || 'localhost'}`;
-    return new URL(origin).origin === new URL(expected).origin;
-  } catch { return false; }
+  return isAllowedAppOrigin(origin, process.env, req);
 }
 function isCorsOriginAllowed(origin) {
-  if (typeof origin !== 'string' || !process.env.APP_ORIGIN) return false;
-  try {
-    const parsedOrigin = new URL(origin);
-    return parsedOrigin.origin === origin && parsedOrigin.origin === new URL(process.env.APP_ORIGIN).origin;
-  }
-  catch { return false; }
+  return isAllowedAppOrigin(origin, process.env);
 }
 async function setSession(res, userId, orgId, req) {
   traceStep('auth.app_session.issue.started', { secureCookieMode: useSecureCookie(req) ? 'secure' : 'insecure' });

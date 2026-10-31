@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm --prefix .. run build --workspace solari-crew-core",
     "build": "vite build --config vite.config.mjs",
     "dev": "vite --config vite.config.mjs"
   },

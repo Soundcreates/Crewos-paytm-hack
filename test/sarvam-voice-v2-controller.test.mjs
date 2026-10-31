@@ -202,7 +202,7 @@ test('exact SDK proxy path pins path/query, replaces browser API key, and return
   assert.equal(harness.state.sessions.size, 1);
   const result = await harness.call({
     path: `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url`,
-    request: { url: `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url?interaction_type=CALL&version=4&user_identifier=${USER}`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie, 'x-api-key': 'browser-key-must-be-ignored' } },
+    request: { url: `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url?interaction_type=call&version=4&user_identifier=${USER}`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie, 'x-api-key': 'browser-key-must-be-ignored' } },
   });
   assert.equal(result.response.status, 200);
   assert.deepEqual(Object.keys(result.response.body).sort(), ['reference_id', 'url']);
