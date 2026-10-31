@@ -38,6 +38,8 @@ Create/configure the Sarvam managed voice app and record these values in the man
 
 The browser runtime route uses the org, workspace, app, and pinned version. Telephony connection and agent number are stored for the outbound configuration but do not enable dialing. CrewOS does not infer dashboard IDs or report a connection as provider-verified until its encrypted credential is saved.
 
+For a separate Chief incident/permission voice agent, set `SARVAM_ESCALATION_APP_ID` and `SARVAM_ESCALATION_APP_VERSION` in the backend environment. The escalation app must belong to the same Sarvam organization and workspace as `SARVAM_ORG_ID` and `SARVAM_WORKSPACE_ID`; it reuses the existing encrypted `SARVAM_API_KEY` connection. `SARVAM_ESCALATION_VOICE_MODEL` and `SARVAM_ESCALATION_LANGUAGES` are optional and default to the general voice settings. Restart the backend after changing these values.
+
 The Sarvam API key is entered through the authenticated manager credentials route and encrypted using the existing `APP_MASTER_KEY` storage lifecycle. It is never returned to the browser. A connection status of `connected` means CrewOS has stored the encrypted credential; this slice does not make a provider validation call or claim the Sarvam account was verified. The SDK must be constructed with `apiKey: ''`.
 
 ## Exact routes and URL templates
@@ -107,13 +109,33 @@ X-CrewOS-Fixture-Signature: hex(HMAC-SHA256(CREWOS_LOCAL_WEBHOOK_FIXTURE_SECRET,
 
 That header is a CrewOS fixture contract, not a Sarvam header. The fixture verifier accepts only a connected `simulation` connection marked `fixture: true`; it cannot verify a production Sarvam callback.
 
-### Voice tools and chief callbacks
+### Sarvam `fetch_call_context` tool
 
-Voice intent, `ask-chief`, and voice approval-confirmation routes stay unavailable until Sarvam can provide a trusted tool/session capability that CrewOS can bind to a stored org/session and a pending approval. There are no tool callback URLs to configure in the Sarvam dashboard in this slice. A voice agent must not write onboarding claims or call protected tools directly.
+The browser session response includes a short-lived, read-only `contextCapability`. The Voice page passes it to the Sarvam agent as `crewos_voice_session_id` and `crewos_context_token`. To let the agent answer questions about the current onboarding and demo setup, configure a Sarvam custom tool named `fetch_call_context`:
+
+```text
+POST https://<public-backend-origin>/api/sarvam/v2/tools/fetch-call-context
+Content-Type: application/json
+```
+
+Request JSON schema:
+
+```json
+{
+  "type": "object",
+  "required": ["voice_session_id", "context_token"],
+  "properties": {
+    "voice_session_id": { "type": "string", "description": "Use crewos_voice_session_id from the agent variables." },
+    "context_token": { "type": "string", "description": "Use crewos_context_token from the agent variables." }
+  }
+}
+```
+
+The endpoint accepts the arguments directly or under `arguments` / `parameters`. It returns a bounded onboarding summary and the simulated Northstar employees, Shopify store, paid order, WhatsApp message, and Twilio state. The capability is bound to the org and active browser voice session, expires with that session, and is held in backend memory; a backend restart invalidates it, so start a new voice session. The tool is read-only and always reports `externalEffects: false`. Do not configure `ask-chief`, decision, or approval tools; those actions remain unavailable and require manager review.
 
 ## Verification handoff
 
-The implementation added no frontend UI, no OAuth redirect URI, and no live provider invocation. Remaining work before live voice: frontend user-gesture/mic lifecycle, a supported callback verifier or private ingress, a trusted policy/authorizer for outbound tasks, safe tool-session binding, and later route/database lifecycle review. Browser proxy live requests also require `SARVAM_LIVE_ENABLED=true`, V2 allowlisting, `PILOT_MODE=false`, a saved encrypted credential, and an explicitly injected transport.
+The Voice page provides a browser interview and sends an explicitly consented transcript to Chief for review. A completed two-way interview opens the local CrewOS simulation dashboard. It creates no real employee, Shopify store, payment, WhatsApp message, SMS, or call. The `fetch_call_context` tool is read-only and scoped to the active voice session. Outbound voice and approval/action tools remain disabled; live provider callbacks still need a supported verifier or trusted private ingress. Browser proxy live requests require `SARVAM_LIVE_ENABLED=true`, V2 allowlisting, `PILOT_MODE=false`, a saved encrypted credential, and an explicitly injected transport.
 
 Recommended Sonnet focused command:
 

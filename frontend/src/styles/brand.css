@@ -1,0 +1,102 @@
+/* Brand layer: carries the landing page look into the signed-in app.
+   Loaded last so it re-themes the shared tokens; page CSS keeps working unchanged.
+   Palette and type come from the pitch deck: paper, ink, iris, ember; Instrument Serif headings. */
+:root {
+  --display: var(--serif);
+  --page: #fafaf7;
+  --surface: #ffffff;
+  --surface-muted: #f6f5f1;
+  --surface-hover: #f0efea;
+  --border: #e6e5df;
+  --text: #1a1c29;
+  --text-secondary: #4b4e5c;
+  --text-muted: #6b6d7c;
+  --accent: #3d41a0;
+  --accent-hover: #2f3380;
+  --accent-soft: #eceefc;
+  --on-accent: #ffffff;
+  --inverse: #1a1c29;
+  --on-inverse: #ffffff;
+  --success: #3f7a2f;
+  --success-soft: #edf5e8;
+  --warning: #9a4f14;
+  --warning-soft: #fdeee2;
+  --ember: #ea8139;
+  --radius-card: 18px;
+  --shadow-float: 0 24px 64px -24px #1a1c2933, 0 2px 8px #1a1c290a;
+}
+:root[data-theme='dark'] {
+  --page: #12141c;
+  --surface: #1a1d29;
+  --surface-muted: #202333;
+  --surface-hover: #292d40;
+  --border: #2f3347;
+  --text: #f3f3f7;
+  --text-secondary: #d3d5e0;
+  --text-muted: #a2a5b6;
+  --accent: #9aa0f0;
+  --accent-hover: #b4b9f6;
+  --accent-soft: #272b4d;
+  --on-accent: #12142e;
+  --inverse: #f3f3f7;
+  --on-inverse: #1a1c29;
+  --success: #8fcf7a;
+  --success-soft: #1f3322;
+  --warning: #f2b27a;
+  --warning-soft: #3b2a1b;
+  --shadow-float: 0 24px 64px -24px #0008, 0 2px 8px #0003;
+}
+@media (prefers-contrast: more) {
+  :root { --border: #787d87; --text-muted: #3f4150; }
+  :root[data-theme='dark'] { --border: #a2a5b6; --text-muted: #d3d5e0; }
+}
+
+/* Serif display type: tighter tracking is for the sans, so relax it. */
+h1, h2 { font-family: var(--serif); font-weight: 400; letter-spacing: -.01em; }
+.page-heading h1 { font-size: 46px; line-height: 1.02; font-weight: 400; letter-spacing: -.015em; }
+.page-heading p { font-size: 15px; }
+.panel-title { font-family: var(--serif); font-weight: 400; font-size: 22px; letter-spacing: -.005em; }
+.section-heading h2, .review-surface > header h2 { font-size: 24px; font-weight: 400; letter-spacing: -.005em; }
+.employee-card h2 { font-size: 30px; font-weight: 400; letter-spacing: -.01em; }
+.delivery-card.featured > .work-title { font-size: 26px; font-weight: 400; letter-spacing: -.005em; }
+.detail-title h1 { font-weight: 400; letter-spacing: -.015em; }
+
+/* Brand mark: three level bars, ember on the last, like the landing page. */
+.brand { gap: 10px; }
+.brand-name { font-family: var(--sans); font-size: 21px; font-weight: 650; letter-spacing: -.035em; text-transform: lowercase; }
+.brand-mark { width: 26px; height: 26px; gap: 3px; align-items: flex-end; justify-content: center; padding-bottom: 4px; background: transparent; border-radius: 0; }
+.brand-mark span { width: 4px; height: 12px; border-radius: 2px; background: var(--text); transform: none; }
+.brand-mark span:nth-child(2) { height: 18px; }
+.brand-mark span:nth-child(3) { height: 9px; background: var(--ember); }
+
+/* Surfaces: softer corners, paper-and-ink contrast. */
+.panel, .modal-surface { border-radius: var(--radius-card); }
+.modal-surface { box-shadow: var(--shadow-float); }
+.nav-item { border-radius: 12px; }
+.nav-item.active { background: var(--surface); border-color: var(--border); box-shadow: 0 1px 2px #1a1c290a; }
+.nav-item.active .nav-icon { color: var(--accent); }
+.nav-count { border-radius: 999px; }
+.kpi-number { font-size: 40px; font-weight: 400; letter-spacing: -.01em; }
+.side-org select, .field input, .field select, .field textarea { border-radius: 12px; }
+
+/* Buttons: ink pills for primary, white pills for the rest. */
+.btn { border-radius: 999px; padding-inline: 18px; font-weight: 500; }
+.btn-small { padding-inline: 14px; }
+.btn-primary, .btn-dark { background: var(--inverse); border-color: var(--inverse); color: var(--on-inverse); box-shadow: none; }
+.btn-primary:hover:not(:disabled), .btn-dark:hover:not(:disabled) { background: var(--text-secondary); border-color: var(--text-secondary); }
+:root[data-theme='dark'] .btn-primary:hover:not(:disabled), :root[data-theme='dark'] .btn-dark:hover:not(:disabled) { background: #fff; border-color: #fff; }
+.btn-link { border-radius: 6px; padding-inline: 0; }
+.icon-button { border-radius: 999px; }
+.auth-box .btn-primary { min-height: 48px; }
+
+/* Auth pages follow the same palette (landing.css supplies the aura). */
+.auth-tabs a.active { border-bottom-color: var(--ember); }
+
+/* Small serif titles run optically smaller than the sans they replace; lift them. */
+.setup-step h2 { font-size: 21px; font-weight: 400; }
+.policy-record h3, .session-record h3, .mcp-record h3 { font-size: 21px; font-weight: 400; }
+.connection-card h2 { font-size: 25px; font-weight: 400; }
+.memory-result h3, .walkthrough-record h3 { font-weight: 400; }
+.empty-state b { font-size: 23px; font-weight: 400; }
+.modal-head h2 { font-size: 30px; font-weight: 400; }
+.task-goal, .walkthrough-title h2 { font-weight: 400; }

@@ -9,6 +9,7 @@ import { Button, Empty, Toast } from '../components/ui.jsx';
 import { AuthView } from '../pages/AuthPage.jsx';
 import { LandingPage } from '../pages/LandingPage.jsx';
 import { isAppHash, navigatePublic, PUBLIC_PATHS, usePublicPage } from '../config/public-routes.jsx';
+import { DEMO_STORES } from '../lib/demo-store.js';
 const loadPage=(path,name)=>lazy(()=>path().then(module=>({default:module[name]})));
 export function routeLoadingLabel(route) {
   const title = route === 'hire' ? 'Hire employee' : route === 'setup' ? 'Setup'
@@ -31,6 +32,7 @@ const SettingsPage=loadPage(()=>import('../pages/AdminPages.jsx'),'SettingsPage'
 const IntegrationsPage=loadPage(()=>import('../pages/IntegrationsPage.jsx'),'IntegrationsPage');
 const CommerceStudioPage=loadPage(()=>import('../pages/CommerceStudioPage.jsx'),'CommerceStudioPage');
 const VoicePage=loadPage(()=>import('../pages/VoicePage.jsx'),'VoicePage');
+const SimulationPage=loadPage(()=>import('../pages/SimulationPage.jsx'),'SimulationPage');
 const EmployeeEditor=loadPage(()=>import('../components/forms/EmployeeEditor.jsx'),'EmployeeEditor');
 const ChiefPage=loadPage(()=>import('../pages/ChiefPage.jsx'),'ChiefPage');
 const SetupPage=loadPage(()=>import('../pages/SetupPage.jsx'),'SetupPage');
@@ -43,8 +45,8 @@ const SchedulesPage=loadPage(()=>import('../pages/SchedulesPage.jsx'),'Schedules
 
 export function App() {
   const {theme, toggleTheme} = useAppearance();
-  const [session, setSession] = useState(null), [authProvider, setAuthProvider] = useState('local'), [pilotMode, setPilotMode] = useState(false), [chiefEnabled,setChiefEnabled]=useState(false), [sessionLoading, setSessionLoading] = useState(true), [bootstrapAttempt, setBootstrapAttempt] = useState(0), [route, setRoute] = useState(routeNow()), [data, setData] = useState(null), [loading, setLoading] = useState(true), [error, setError] = useState(''), [dialog, setDialog] = useState(null), [dialogBusy, setDialogBusy] = useState(false), [toast, setToast] = useState(null), [liveState, setLiveState] = useState('Live · changes sync'), [clock, setClock] = useState(''), [taskToOpen, setTaskToOpen] = useState(() => new URLSearchParams(location.hash.split('?')[1]||location.search).get('task'));
-  const officeLayout = useRef(null), lastHash = useRef(location.hash), loadedRoute=useRef(null);
+  const [session, setSession] = useState(null), [authProvider, setAuthProvider] = useState('local'), [pilotMode, setPilotMode] = useState(false), [chiefEnabled,setChiefEnabled]=useState(false), [sessionLoading, setSessionLoading] = useState(true), [bootstrapAttempt, setBootstrapAttempt] = useState(0), [route, setRoute] = useState(routeNow()), [simulationStoreType, setSimulationStoreType] = useState('clothing'), [chiefCallContext, setChiefCallContext] = useState(null), [simulationReturnState, setSimulationReturnState] = useState(null), [data, setData] = useState(null), [loading, setLoading] = useState(true), [error, setError] = useState(''), [dialog, setDialog] = useState(null), [dialogBusy, setDialogBusy] = useState(false), [toast, setToast] = useState(null), [liveState, setLiveState] = useState('Live · changes sync'), [clock, setClock] = useState(''), [taskToOpen, setTaskToOpen] = useState(() => new URLSearchParams(location.hash.split('?')[1]||location.search).get('task'));
+  const officeLayout = useRef(null), lastHash = useRef(location.hash), loadedRoute=useRef(null), interviewCompleteRef=useRef(false);
   const [viewer,setViewer]=useState(null),[invite,setInvite]=useState(()=>new URLSearchParams(location.search).get('invite'));
   const [chiefPrefill,setChiefPrefill]=useState(null);
   const publicPage = usePublicPage();
@@ -63,14 +65,14 @@ export function App() {
     return { ...current, workflows };
   }), []);
   const consumeTaskToOpen = useCallback(() => setTaskToOpen(null), []);
-  const go = useCallback((next) => { const target = String(next || 'overview'); if(target.split('?')[0]!==routeRef.current && !confirmNavigation())return false; location.hash = target || 'overview'; lastHash.current=location.hash; setRoute(routeNow(pilotMode)); return true; }, [pilotMode]);
-  const updateSession = useCallback(async (nextRoute) => { const current = await api('/api/auth/me'); if(nextRoute==='chief'&&chiefEnabled){location.hash='chief';lastHash.current=location.hash;setRoute('chief');}setSession(current);setInvite(new URLSearchParams(location.search).get('invite'));return current; }, [chiefEnabled]);
+  const go = useCallback((next) => { const target = String(next || 'overview'); const page=target.split('?')[0]; if(page==='simulation'&&!interviewCompleteRef.current)return false; if(target.split('?')[0]!==routeRef.current && !confirmNavigation())return false; if(page==='voice'&&routeRef.current==='simulation')interviewCompleteRef.current=false; location.hash = target || 'overview'; lastHash.current=location.hash; setRoute(routeNow(pilotMode)); return true; }, [pilotMode]);
+  const updateSession = useCallback(async (nextRoute) => { const current = await api('/api/auth/me'); if(nextRoute !== undefined || invite || publicPage === 'login' || publicPage === 'register'){interviewCompleteRef.current=false;setChiefCallContext(null);setSimulationReturnState(null);history.replaceState(null,'',`${location.pathname}${location.search}#voice`);lastHash.current=location.hash;setRoute('voice');}setSession(current);setInvite(new URLSearchParams(location.search).get('invite'));return current; }, [invite, publicPage]);
 
   useEffect(() => { routeRef.current = route; }, [route]);
-  // Signed-in visitors on /login or /register go straight into the workspace, keeping any hash route.
-  // After signing in from /login or /register, move into the workspace (keeping any deep link).
-  useEffect(() => { if (session?.user && !invite && (publicPage === 'login' || publicPage === 'register')) { if (!isAppHash(location.hash)) history.replaceState(null, '', '/#overview'); navigatePublic('/', { replace: true, keepLocation: true }); setRoute(routeNow(pilotMode)); } }, [session?.user, invite, publicPage, pilotMode]);
-  useEffect(() => { const handler = () => {const next=routeNow(pilotMode);if(next!==routeRef.current&&!confirmNavigation()){history.replaceState(null,'',location.pathname+location.search+lastHash.current);return;}lastHash.current=location.hash;setRoute(next);const task=new URLSearchParams(location.hash.split('?')[1]).get('task');if(task)setTaskToOpen(task);}; window.addEventListener('hashchange', handler); return () => window.removeEventListener('hashchange', handler); }, [pilotMode]);
+  // A fresh sign-in always starts the Voice interview; legacy workspace routes no longer open other pages.
+  useEffect(() => { if (session?.user && !invite && (publicPage === 'login' || publicPage === 'register')) { history.replaceState(null, '', '/#voice'); navigatePublic('/', { replace: true, keepLocation: true }); lastHash.current=location.hash; setRoute('voice'); } }, [session?.user, invite, publicPage]);
+  useEffect(() => { if (session?.user && !invite && publicPage === 'landing' && !isAppHash(location.hash)) { history.replaceState(null, '', '/#voice'); lastHash.current=location.hash; setRoute('voice'); } }, [session?.user, invite, publicPage]);
+  useEffect(() => { const handler = () => {let next=routeNow(pilotMode);if(next==='simulation'&&!interviewCompleteRef.current){next='voice';history.replaceState(null,'',`${location.pathname}${location.search}#voice`);}if(next!==routeRef.current&&!confirmNavigation()){history.replaceState(null,'',location.pathname+location.search+lastHash.current);return;}lastHash.current=location.hash;setRoute(next);const task=new URLSearchParams(location.hash.split('?')[1]).get('task');if(task)setTaskToOpen(task);}; window.addEventListener('hashchange', handler); return () => window.removeEventListener('hashchange', handler); }, [pilotMode]);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -90,7 +92,10 @@ export function App() {
       setChiefEnabled(Boolean(config.chiefEnabled));
       const restricted = Boolean(config.pilotMode);
       setPilotMode(restricted);
-      setRoute(routeNow(restricted));
+      const requestedRoute=routeNow(restricted),initialRoute=requestedRoute==='simulation'?'voice':requestedRoute;
+      if(initialRoute!==requestedRoute)history.replaceState(null,'',`${location.pathname}${location.search}#voice`);
+      lastHash.current=location.hash;
+      setRoute(initialRoute);
       setSession(current);
     }).catch((reason) => {
       if (active) {
@@ -110,6 +115,9 @@ export function App() {
   const act = useCallback(async (action, id, extra) => {
     try {
       if (pilotMode && ['new-schedule','edit-schedule','pause-schedule','resume-schedule','delete-schedule'].includes(action)) return notify('Recurring schedules are unavailable in pilot mode.', true);
+      if (action === 'complete-demo-interview') { setSimulationStoreType(Object.hasOwn(DEMO_STORES, id) ? id : 'clothing'); setChiefCallContext(null); setSimulationReturnState(null); interviewCompleteRef.current=true; return go('simulation'); }
+      if (action === 'start-chief-call') { const context=id&&typeof id==='object'?id:{}; setSimulationStoreType(Object.hasOwn(DEMO_STORES, context.storeType) ? context.storeType : 'clothing'); setChiefCallContext(context); setSimulationReturnState(context.returnState||null); return go('voice'); }
+      if (action === 'return-chief-call') { const storeType=Object.hasOwn(DEMO_STORES,id)?id:'clothing'; setSimulationStoreType(storeType); setChiefCallContext(null); setSimulationReturnState(current=>current?{...current,teamStatus:'Chief reviewed the escalation with you',teamNotes:[...(current.teamNotes||[]),'Chief discussed the issue with you by voice. The payment remains unchanged.'],incident:'Chief reviewed this issue with you in CrewOS. No payment was changed.'}:current); interviewCompleteRef.current=true; return go('simulation'); }
       if (action === 'navigate') return go(id);
       if (action === 'chief-hire') { setChiefPrefill({ specDraft:id.draft, chiefProposalId:id.proposalId }); return go('hire'); }
       if (action === 'hire' || action === 'compile-spec') return go('hire');
@@ -234,13 +242,13 @@ export function App() {
   }
 
   async function changeOrganization(organizationId) { if(!confirmNavigation())return;try { await api('/api/org/switch', { method: 'POST', body: JSON.stringify({ organizationId }) }); await updateSession(); notify('Workspace switched.'); } catch (error) { notify(error.message, true); } }
-  async function logout() { if(!confirmNavigation())return;if (authProvider === 'neon') await neonAuth('sign-out').catch(() => {}); await api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => {}); socket.current?.close(); setSession(null); setData(null); lastHash.current=''; navigatePublic(PUBLIC_PATHS.landing, { replace: true }); setRoute(routeNow(pilotMode)); }
+  async function logout() { if(!confirmNavigation())return;if (authProvider === 'neon') await neonAuth('sign-out').catch(() => {}); await api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => {}); socket.current?.close(); setSession(null); setData(null); setChiefCallContext(null); setSimulationReturnState(null); interviewCompleteRef.current=false; lastHash.current=''; navigatePublic(PUBLIC_PATHS.landing, { replace: true }); setRoute(routeNow(pilotMode)); }
   function retryStartup() { setError(''); setSessionLoading(true); setBootstrapAttempt((attempt) => attempt + 1); }
 
   const signedIn = Boolean(session?.user);
   // "/" is the public landing page unless the visitor is signed in or following a workspace deep link.
   // "/" and "/landing" are public for everyone; a workspace hash ("/#tasks") opens the app or sign-in.
-  const showLanding = !invite && publicPage === 'landing' && !isAppHash(location.hash);
+  const showLanding = !session?.user && !invite && publicPage === 'landing' && !isAppHash(location.hash);
   useEffect(() => {
     document.title = showLanding ? 'CrewOS · AI employees for founders'
       : !signedIn || invite ? (publicPage === 'register' && !invite ? 'Create your workspace · CrewOS' : 'Sign in · CrewOS')
@@ -264,7 +272,8 @@ export function App() {
     else if (route === 'office') page = <OfficePage data={data} session={session} actions={act} notify={notify} onEdit={onEditOffice} onError={onCanvasError} onOfficeModel={setOfficeLayout}/>;
     else if (route === 'integrations') page = <IntegrationsPage data={data} session={session} actions={act}/>;
     else if (route === 'commerce') page = isManager(session)?<CommerceStudioPage data={data} refresh={refresh}/>:<Empty title="Manager access required">Ask a workspace manager to review Commerce Studio setup.</Empty>;
-    else if (route === 'voice') page = isManager(session)?<VoicePage data={data} user={session.user}/>:<Empty title="Manager access required">A workspace manager can configure Sarvam voice sessions.</Empty>;
+    else if (route === 'simulation') page = <SimulationPage actions={act} storeType={simulationStoreType} restoreState={simulationReturnState}/>;
+    else if (route === 'voice') page = isManager(session)?<VoicePage data={data} user={session.user} actions={act} callContext={chiefCallContext}/>:<Empty title="Manager access required">A workspace manager can configure Sarvam voice sessions.</Empty>;
     else if (route === 'reports') page = <ReportsPage data={data} session={session} actions={act}/>;
     else if (route === 'settings') page = <SettingsPage data={data} session={session} actions={act} notify={notify} refresh={refresh} updateSession={updateSession}/>;
   }

@@ -56,7 +56,7 @@ function makeHarness({ fixtureEnabled = false, liveEnabled = false, v2Enabled = 
         voice_session_id: input.id, org_id: input.orgId, connection_id: input.connectionId, user_id: input.userId, task_id: input.taskId,
         onboarding_session_id: input.onboardingSessionId, session_type: 'browser', state: 'created', environment: input.environment,
         sarvam_org_id: input.sarvamOrgId, workspace_id: input.workspaceId, app_id: input.appId, app_version: input.appVersion,
-        app_config: structuredClone(input.appConfig), config_hash: input.configHash, browser_token_hash: input.tokenHash,
+        app_config: structuredClone(input.appConfig), app_config_json: JSON.stringify(input.appConfig), config_hash: input.configHash, browser_token_hash: input.tokenHash,
         transcript_consent_status: 'granted', transcript_consent_explicit: 1, transcript_retention_until: input.transcriptConsent.retentionUntil,
         expires_at: input.expiresAt, created_at: input.createdAt, updated_at: input.createdAt,
       };
@@ -225,6 +225,35 @@ test('exact SDK proxy path pins path/query, replaces browser API key, and return
     request: { url: `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url?interaction_type=CALL`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie } },
   }), error => error.code === 'sarvam_proxy_binding_mismatch');
   assert.equal(harness.state.proxyCalls.length, 1);
+});
+
+test('fetch_call_context is read-only and requires the active browser session capability', async () => {
+  const harness = makeHarness({ liveEnabled: true });
+  const { voiceSessionId, cookie, session } = await setupLiveBrowserSession(harness);
+  const proxyPath = `/api/sarvam-proxy/orgs/${APP_CONFIG.sarvamOrgId}/workspaces/${APP_CONFIG.workspaceId}/apps/${APP_CONFIG.appId}/url`;
+  await harness.call({ path: proxyPath, request: { url: `${proxyPath}?interaction_type=call&version=4&user_identifier=${USER}`, headers: { origin: 'https://crewos.example.test', 'sec-fetch-site': 'same-origin', cookie } } });
+  const response = responseCapture();
+  const handled = await harness.controller.handleToolRequest({
+    path: '/api/sarvam/v2/tools/fetch-call-context', method: 'POST', request: { headers: {} }, response,
+    body: { voice_session_id: voiceSessionId, context_token: session.response.body.contextCapability },
+  });
+  assert.equal(handled, true);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.mode, 'simulation');
+  assert.equal(response.body.store.domain, 'northstar-demo.myshopify.com');
+  assert.equal(response.body.customerService.messagesOrCallsSent, false);
+  assert.equal(response.body.externalEffects, false);
+  assert.equal(JSON.stringify(response.body).includes(session.response.body.contextCapability), false);
+
+  await assert.rejects(harness.controller.handleToolRequest({
+    path: '/api/sarvam/v2/tools/fetch-call-context', method: 'POST', request: { headers: {} }, response: responseCapture(),
+    body: { voice_session_id: voiceSessionId, context_token: 'x'.repeat(48) },
+  }), error => error.code === 'voice_context_capability_invalid');
+  await harness.call({ path: `/api/sarvam/v2/sessions/${voiceSessionId}`, method: 'DELETE' });
+  await assert.rejects(harness.controller.handleToolRequest({
+    path: '/api/sarvam/v2/tools/fetch-call-context', method: 'POST', request: { headers: {} }, response: responseCapture(),
+    body: { voice_session_id: voiceSessionId, context_token: session.response.body.contextCapability },
+  }), error => error.code === 'voice_context_capability_invalid');
 });
 
 test('proxy rejects cross-origin, malformed path/query, mismatched app, and replay before transport', async () => {

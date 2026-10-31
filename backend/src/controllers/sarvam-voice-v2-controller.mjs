@@ -51,6 +51,9 @@ function serverAppConfigDefaults(env) {
   const languages = [...new Set(String(env.SARVAM_LANGUAGES || 'en-IN').split(',').map(value => value.trim()).filter(value => /^[A-Za-z0-9_-]{2,24}$/.test(value)))];
   const rawVersion = String(env.SARVAM_APP_VERSION || '').trim();
   const appVersion = /^\d+$/.test(rawVersion) ? Number(rawVersion) : null;
+  const escalationLanguages = [...new Set(String(env.SARVAM_ESCALATION_LANGUAGES || env.SARVAM_LANGUAGES || 'en-IN').split(',').map(value => value.trim()).filter(value => /^[A-Za-z0-9_-]{2,24}$/.test(value)))];
+  const rawEscalationVersion = String(env.SARVAM_ESCALATION_APP_VERSION || '').trim();
+  const escalationAppVersion = /^\d+$/.test(rawEscalationVersion) ? Number(rawEscalationVersion) : null;
   const defaults = {
     sarvamOrgId: String(env.SARVAM_ORG_ID || '').trim(),
     workspaceId: String(env.SARVAM_WORKSPACE_ID || '').trim(),
@@ -60,6 +63,10 @@ function serverAppConfigDefaults(env) {
     languages: languages.length ? languages : ['en-IN'],
     environment: ['staging', 'production', 'simulation'].includes(String(env.SARVAM_ENVIRONMENT || '').trim())
       ? String(env.SARVAM_ENVIRONMENT).trim() : 'staging',
+    escalationAppId: String(env.SARVAM_ESCALATION_APP_ID || '').trim(),
+    escalationAppVersion,
+    escalationVoiceModel: String(env.SARVAM_ESCALATION_VOICE_MODEL || env.SARVAM_VOICE_MODEL || 'Sarvam Voice Agent').trim(),
+    escalationLanguages: escalationLanguages.length ? escalationLanguages : ['en-IN'],
   };
   return {
     ...defaults,
@@ -73,6 +80,24 @@ function serverAppConfigDefaults(env) {
       voiceModel: Boolean(String(env.SARVAM_VOICE_MODEL || '').trim()),
       languages: Boolean(String(env.SARVAM_LANGUAGES || '').trim()),
     },
+    escalationConfigured: idValid(defaults.sarvamOrgId) && idValid(defaults.workspaceId) && idValid(defaults.escalationAppId) &&
+      Number.isSafeInteger(defaults.escalationAppVersion) && defaults.escalationAppVersion > 0,
+  };
+}
+
+function sessionAppConfig(connectionConfig, purpose, env) {
+  if (!connectionConfig || typeof connectionConfig !== 'object' || Array.isArray(connectionConfig)) return null;
+  if (purpose === 'onboarding') return connectionConfig;
+  if (purpose !== 'escalation') return null;
+  const defaults = serverAppConfigDefaults(env);
+  if (!defaults.escalationConfigured || connectionConfig.sarvamOrgId !== defaults.sarvamOrgId || connectionConfig.workspaceId !== defaults.workspaceId) return null;
+  return {
+    ...connectionConfig,
+    appId: defaults.escalationAppId,
+    appVersion: defaults.escalationAppVersion,
+    voiceModel: defaults.escalationVoiceModel,
+    languages: defaults.escalationLanguages,
+    appPurpose: 'escalation',
   };
 }
 
@@ -143,6 +168,9 @@ export function createSarvamVoiceV2Controller({
   }
 
   const fixtureEnabled = env.NODE_ENV !== 'production' && truthy(env.CREWOS_LOCAL_WEBHOOK_FIXTURES) && truthy(env.SARVAM_LOCAL_FIXTURES);
+  // Short-lived per-call capability used only by Sarvam's read-only context tool.
+  // The normal browser session remains protected by its separate HttpOnly cookie.
+  const callContextCapabilities = new Map();
   const callbackVerifier = fixtureEnabled ? signedFixtureVerifier(env.CREWOS_LOCAL_WEBHOOK_FIXTURE_SECRET, repository) : undefined;
   const callbackServiceOptions = {
     repository,
@@ -184,6 +212,7 @@ export function createSarvamVoiceV2Controller({
       browserVoice: { liveEnabled, fixtureEnabled, status: liveEnabled || fixtureEnabled ? 'configuration_required' : 'disabled' },
       outbound: { enabled: false, status: 'callback_verifier_required' },
       callbacks: { liveVerified: false, status: 'supported_verifier_or_trusted_ingress_required' },
+      fetchCallContext: { enabled: true, method: 'POST', path: '/api/sarvam/v2/tools/fetch-call-context', status: 'read_only_session_capability' },
       voiceIntent: { enabled: false, status: 'trusted_voice_tool_session_binding_unavailable' },
       askChief: { enabled: false, status: 'trusted_voice_tool_session_binding_unavailable' },
       protectedActionsExecutedByVoice: false,
@@ -285,10 +314,11 @@ export function createSarvamVoiceV2Controller({
         session.connection_status !== 'connected' || session.sarvam_org_id !== sarvamOrgId || session.workspace_id !== workspaceId || session.app_id !== appId) {
       fail(HttpError, 403, 'Sarvam SDK request does not match an active organization-owned voice session.', 'sarvam_proxy_binding_mismatch');
     }
-    const appConfig = session.app_config || {};
+    const storedAppConfig = session.app_config || {};
+    const purpose = storedAppConfig.appPurpose === 'escalation' ? 'escalation' : 'onboarding';
+    const appConfig = sessionAppConfig(session.connection_config, purpose, env) || {};
     if (session.app_version !== Number(appConfig.appVersion) || session.config_hash !== digest(JSON.stringify(appConfig)) ||
-        !session.connection_config || JSON.stringify(session.connection_config) !== JSON.stringify(appConfig) ||
-        digest(JSON.stringify(session.connection_config)) !== session.config_hash) {
+        !session.connection_config || JSON.stringify(storedAppConfig) !== JSON.stringify(appConfig)) {
       fail(HttpError, 409, 'Stored Sarvam app binding changed after voice session creation.', 'sarvam_proxy_binding_mismatch');
     }
     const requestedVersion = requestUrl.searchParams.get('version');
@@ -371,6 +401,7 @@ export function createSarvamVoiceV2Controller({
           voiceModel: defaults.voiceModel,
           languages: defaults.languages,
           provided: defaults.provided,
+          escalationConfigured: defaults.escalationConfigured,
         },
       });
     }
@@ -431,20 +462,31 @@ export function createSarvamVoiceV2Controller({
       const at = timestamp();
       const sessionId = newId('voice_session');
       const token = randomBytes(32).toString('base64url');
-      const appConfig = connection.config;
+      const contextCapability = randomBytes(32).toString('base64url');
+      const appPurpose = body.appPurpose == null ? 'onboarding' : body.appPurpose;
+      if (!['onboarding', 'escalation'].includes(appPurpose)) fail(HttpError, 400, 'Choose a supported Sarvam voice app purpose.', 'sarvam_config_invalid');
+      const appConfig = sessionAppConfig(connection.config, appPurpose, env);
+      if (!appConfig) fail(HttpError, 503, appPurpose === 'escalation'
+        ? 'The escalation Sarvam app is not configured for this organization and workspace. Set SARVAM_ESCALATION_APP_ID and SARVAM_ESCALATION_APP_VERSION in backend/.env.'
+        : 'The connected Sarvam app binding is unavailable.', 'sarvam_escalation_app_unconfigured');
       const created = await repository.createBrowserVoiceSession({
         id: sessionId, orgId: org.id, connectionId: connection.id, userId: user.id, taskId: task?.id || null, onboardingSessionId: onboarding.id,
         environment: connection.environment, sarvamOrgId: appConfig.sarvamOrgId, workspaceId: appConfig.workspaceId,
         appId: appConfig.appId, appVersion: Number(appConfig.appVersion), appConfig, configHash: digest(JSON.stringify(appConfig)),
+        connectionConfig: connection.config,
         tokenHash: digest(token), transcriptConsent: { capturedAt: at, retentionUntil: new Date(Date.parse(at) + 30 * 24 * 60 * 60 * 1000).toISOString() },
         createdAt: at, expiresAt: new Date(Date.parse(at) + 10 * 60 * 1000).toISOString(),
       });
+      for (const [key, value] of callContextCapabilities) if (Date.parse(value.expiresAt) <= Date.parse(at)) callContextCapabilities.delete(key);
+      while (callContextCapabilities.size >= 500) callContextCapabilities.delete(callContextCapabilities.keys().next().value);
+      callContextCapabilities.set(sessionId, { orgId: org.id, tokenHash: digest(contextCapability), expiresAt: created.expires_at });
       return sendJson(response, 201, {
         voiceSessionId: sessionId,
         state: created.state,
         environment: created.environment,
         app: { orgId: created.sarvam_org_id, workspaceId: created.workspace_id, appId: created.app_id, version: created.app_version },
         sdk: { baseUrl: '/api/sarvam-proxy/', apiKey: '' },
+        contextCapability,
         expiresAt: created.expires_at,
         simulated: isFixture,
       }, { 'cache-control': 'no-store', 'set-cookie': cookieHeader(token, request) });
@@ -458,6 +500,7 @@ export function createSarvamVoiceV2Controller({
     if (sessionRoute && method === 'DELETE') {
       const result = await repository.endVoiceSession(org.id, sessionRoute[1], user.id, timestamp());
       if (Number(result?.changes || 0) !== 1) fail(HttpError, 404, 'Active voice session was not found.', 'voice_session_not_found');
+      callContextCapabilities.delete(sessionRoute[1]);
       return sendJson(response, 200, { ok: true, voiceSessionId: sessionRoute[1], state: 'ended' }, { 'set-cookie': clearVoiceCookie(request) });
     }
     const transcriptRoute = path.match(/^\/api\/sarvam\/v2\/sessions\/([^/]+)\/transcript$/);
@@ -479,6 +522,74 @@ export function createSarvamVoiceV2Controller({
       return fail(HttpError, 503, 'Voice tools remain unavailable until a trusted provider-side session capability can be bound to this organization and voice session.', 'voice_tool_binding_unavailable');
     }
     fail(HttpError, 404, 'Sarvam V2 route was not found.', 'route_not_found');
+  }
+
+  async function handleToolRequest({ path, method, request, response, body = {} }) {
+    if (path !== '/api/sarvam/v2/tools/fetch-call-context') return false;
+    if (method !== 'POST') fail(HttpError, 405, 'fetch_call_context accepts POST only.', 'method_not_allowed');
+    if (!body || typeof body !== 'object' || Array.isArray(body)) fail(HttpError, 400, 'Tool arguments must be a JSON object.', 'voice_tool_request_invalid');
+    const args = body.arguments && typeof body.arguments === 'object' && !Array.isArray(body.arguments)
+      ? body.arguments : body.parameters && typeof body.parameters === 'object' && !Array.isArray(body.parameters) ? body.parameters : body;
+    const sessionId = String(args.voice_session_id || '').trim();
+    const supplied = String(args.context_token || request?.headers?.authorization?.replace(/^Bearer\s+/i, '') || '');
+    const capability = callContextCapabilities.get(sessionId);
+    if (!capability || Date.parse(capability.expiresAt) <= Date.parse(timestamp()) || !supplied || !/^[A-Za-z0-9_-]{40,80}$/.test(supplied)) {
+      callContextCapabilities.delete(sessionId);
+      fail(HttpError, 401, 'This read-only context capability is missing or expired. Start a new Chief voice interview.', 'voice_context_capability_invalid');
+    }
+    const actualHash = Buffer.from(digest(supplied), 'hex');
+    const expectedHash = Buffer.from(capability.tokenHash, 'hex');
+    if (actualHash.length !== expectedHash.length || !timingSafeEqual(actualHash, expectedHash)) fail(HttpError, 401, 'This read-only context capability is invalid.', 'voice_context_capability_invalid');
+    if (!organizationEngineV2Status(capability.orgId, env).enabled || pilotMode()) fail(HttpError, 403, 'This workspace can no longer use the voice context tool.', 'v2_disabled');
+    const session = await repository.findVoiceSessionByOrgAndId(capability.orgId, sessionId);
+    if (!session || session.org_id !== capability.orgId || session.session_type !== 'browser' || session.state !== 'url_issued' || Date.parse(session.expires_at) <= Date.parse(timestamp())) {
+      callContextCapabilities.delete(sessionId);
+      fail(HttpError, 401, 'The browser voice session has ended or expired.', 'voice_session_not_active');
+    }
+    const connection = await repository.findConnectionByOrgAndId(capability.orgId, session.connection_id);
+    let boundConfig;
+    try { boundConfig = JSON.parse(session.app_config_json || '{}'); } catch { boundConfig = null; }
+    const purpose = boundConfig?.appPurpose === 'escalation' ? 'escalation' : 'onboarding';
+    const expectedConfig = connection ? sessionAppConfig(connection.config, purpose, env) : null;
+    if (!connection || connection.status !== 'connected' || connection.provider !== 'sarvam' || !boundConfig || !expectedConfig ||
+        session.config_hash !== digest(JSON.stringify(boundConfig)) || JSON.stringify(boundConfig) !== JSON.stringify(expectedConfig)) {
+      callContextCapabilities.delete(sessionId);
+      fail(HttpError, 409, 'The voice session app binding is no longer current.', 'voice_session_binding_invalid');
+    }
+    const onboarding = session.onboarding_session_id ? await onboardingService?.get(capability.orgId, session.onboarding_session_id) : null;
+    const profile = onboarding?.profile || {};
+    const business = profile.business || {};
+    const products = Array.isArray(profile.products) ? profile.products.slice(0, 10).map(product => ({
+      name: String(product?.title || '').slice(0, 120),
+      variants: (Array.isArray(product?.variants) ? product.variants : []).slice(0, 8).map(variant => ({
+        sku: variant?.sku ? String(variant.sku).slice(0, 64) : null,
+        priceMinor: Number.isSafeInteger(Number(variant?.priceMinor)) ? Number(variant.priceMinor) : null,
+        currency: /^[A-Z]{3}$/.test(String(variant?.currency || '')) ? variant.currency : null,
+      })),
+    })) : [];
+    return sendJson(response, 200, {
+      mode: 'simulation',
+      source: 'crewos_read_only_voice_context',
+      onboarding: { state: onboarding?.session?.state || 'collecting', business: {
+        name: String(business.name || 'Northstar Supply').slice(0, 120),
+        description: String(business.description || 'A demo outdoor-goods shop used to show the CrewOS workflow.').slice(0, 500),
+        targetAudiences: Array.isArray(business.targetAudiences) ? business.targetAudiences.slice(0, 8).map(value => String(value).slice(0, 100)) : [],
+        products,
+      } },
+      employees: [
+        { name: 'Maya Chen', role: 'Sales agent', capabilities: ['answer product and order questions'], state: 'simulated_ready' },
+        { name: 'Avery Patel', role: 'Customer care', capabilities: ['review delivery and product issues'], state: 'simulated_ready' },
+        { name: 'Jordan Lee', role: 'Operations', capabilities: ['flag payment concerns for manager review'], state: 'simulated_ready' },
+      ],
+      store: { name: 'Northstar Supply', domain: 'northstar-demo.myshopify.com', state: 'simulated_ready', catalogProducts: 3 },
+      recentActivity: [
+        { type: 'paid_order', id: 'NS-1042', amount: '$64.99', state: 'paid_simulated' },
+        { type: 'customer_message', channel: 'WhatsApp', text: 'Is the Everyday Pack available?', state: 'answered_simulated' },
+      ],
+      customerService: { channel: 'Twilio', state: 'simulated_only', messagesOrCallsSent: false },
+      nextStep: 'The sales employee answers the customer. It may ask Customer care to review a delivery or product issue. Major payment concerns are paused for manager review; Chief escalates inside CrewOS only.',
+      externalEffects: false,
+    }, { 'cache-control': 'no-store' });
   }
 
   async function storeOnboardingTranscript({ orgId, onboardingSessionId, voiceSessionId, turns, HttpError: ErrorType }) {
@@ -524,7 +635,7 @@ export function createSarvamVoiceV2Controller({
     return sendJson(response, result.duplicate ? 200 : 202, { ...result, simulated: true }, { 'cache-control': 'no-store' });
   }
 
-  return Object.freeze({ handleAuthenticated, handleCallback, readiness: () => Object.freeze({ ...capabilityStatus({ id: '' }), outboundEnabled: callbackService.readiness.outboundEnabled, callbackVerifierInjected: callbackService.readiness.callbackVerifierInjected }) });
+  return Object.freeze({ handleAuthenticated, handleToolRequest, handleCallback, readiness: () => Object.freeze({ ...capabilityStatus({ id: '' }), outboundEnabled: callbackService.readiness.outboundEnabled, callbackVerifierInjected: callbackService.readiness.callbackVerifierInjected }) });
 }
 
 function defaultParseCookie(header, cookieName) {

@@ -96,7 +96,7 @@ export function createSarvamVoiceRepository({ all, get, run, transaction, newId,
       input.tokenHash, input.transcriptConsent ? 'granted' : null, input.transcriptConsent ? 1 : 0,
       input.transcriptConsent?.capturedAt || null, input.transcriptConsent?.retentionUntil || null,
       input.createdAt, input.createdAt, input.expiresAt,
-      input.orgId, input.connectionId, input.environment, JSON.stringify(input.appConfig));
+      input.orgId, input.connectionId, input.environment, JSON.stringify(input.connectionConfig || input.appConfig));
       if (changes(result) !== 1) throw Object.assign(new Error('Sarvam connection or organization binding is not available.'), { code: 'sarvam_connection_unavailable' });
       return findVoiceSessionByOrgAndId(input.orgId, input.id);
     },

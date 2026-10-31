@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { NAV } from './navigation.js';
 
 // Public pages live on real paths; the signed-in app keeps its hash routes on "/".
-export const PUBLIC_PATHS = { landing: '/', login: '/login', register: '/register', workspace: '/#overview' };
+export const PUBLIC_PATHS = { landing: '/', login: '/login', register: '/register', workspace: '/#voice' };
 const NAVIGATE_EVENT = 'crewos:public-navigate';
 const APP_HASH_PREFIXES = ['employee/', 'meeting/'];
-const APP_HASH_ROUTES = new Set([...NAV.map(([key]) => key), 'setup', 'chief', 'hire']);
+const APP_HASH_ROUTES = new Set([...NAV.map(([key]) => key), 'overview', 'tasks', 'schedules', 'employees', 'probation', 'meetings', 'coworkers', 'office', 'memory', 'integrations', 'commerce', 'reports', 'settings', 'setup', 'chief', 'hire']);
 
 export function publicPageFromPath(pathname) {
   const path = String(pathname || '/').replace(/\/+$/, '') || '/';

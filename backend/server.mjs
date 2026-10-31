@@ -2541,6 +2541,10 @@ async function handleRequest(req, res) {
   const body = needsBody ? await readBody(req, bodyLimit) : {};
   traceStep('http.route.handler_ready', { method, route: path });
 
+  // Sarvam invokes this narrow read-only tool server-to-server. It is authorized
+  // by a short-lived capability bound to one browser voice session, not a user cookie.
+  if (await sarvamVoiceV2Controller.handleToolRequest({ path, method, request: req, response: res, body })) return;
+
   if (await authController.handle({ path, method, request: req, response: res, body, context, neonSession })) return;
   if (await jobController.handle({ path, method, context, response: res })) return;
   if (!req[JOB_CONTEXT] && (req.headers.prefer === 'respond-async' || process.env.PROCESS_ROLE === 'api') && method === 'POST' && (path === '/api/documents' || /^\/api\/simulations\/[^/]+\/run$/.test(path) || /^\/api\/meetings\/[^/]+\/(prepare|discuss|run)$/.test(path) || /^\/api\/employees\/[^/]+\/probation$/.test(path))) {
