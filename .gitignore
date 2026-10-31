@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+data/*.sqlite*
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+*.py[cod]
+
+.playwright-mcp/

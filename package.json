@@ -1,0 +1,48 @@
+{
+  "name": "solari-crew-os",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "workspaces": [
+    "backend",
+    "frontend",
+    "lib"
+  ],
+  "bin": {
+    "crewos": "./backend/bin/crewos.mjs"
+  },
+  "scripts": {
+    "build:ts": "npm --workspace solari-crew-core run build && npm --workspace @solari/backend run build",
+    "build:ui": "npm --workspace @solari/frontend run build",
+    "dev:frontend": "npm --workspace @solari/frontend run dev",
+    "dev:backend": "node --env-file-if-exists=.env --watch backend/server.mjs",
+    "predev:backend": "npm run build:ts",
+    "build": "npm run build:ts && npm run build:ui",
+    "prestart": "npm run build",
+    "start": "node --env-file-if-exists=.env backend/server.mjs",
+    "predev": "npm run build",
+    "dev": "node --env-file-if-exists=.env --watch backend/server.mjs",
+    "prememory:migrate": "npm run build:ts",
+    "pretest": "npm run build",
+    "test": "python3 -m unittest discover -s test -p 'test_extract_document_*.py' && node --test",
+    "pretest:live": "npm run build",
+    "test:live": "node --env-file=.env --test test-live/*.live.mjs",
+    "memory:migrate": "node backend/scripts/migrate-memory-vectors.mjs",
+    "check:source": "node scripts/check-source.mjs",
+    "predoctor": "npm run build:ts",
+    "doctor": "node --env-file-if-exists=.env backend/scripts/doctor.mjs",
+    "check:release": "npm run check:source && npm test && npm audit --audit-level=high",
+    "test:postgres": "node scripts/check-postgres.mjs --confirm-disposable-postgres",
+    "start:api": "node --env-file-if-exists=.env backend/scripts/start-api.mjs",
+    "start:worker": "node --env-file-if-exists=.env backend/scripts/start-worker.mjs"
+  },
+  "overrides": {
+    "rollup": "4.63.1"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@solari/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "predev": "npm run build:ts --prefix ..",
+    "dev": "node --env-file-if-exists=../.env --env-file-if-exists=.env --watch server.mjs"
+  },
+  "dependencies": {
+    "@langchain/langgraph": "^1.4.19",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.0.4",
+    "@novnc/novnc": "^1.7.0",
+    "@shopify/admin-api-client": "2.0.1",
+    "@shopify/shopify-api": "15.0.1",
+    "@solarisdk/browser": "^0.1.4",
+    "@solarisdk/desktop": "^0.1.2",
+    "@solarisdk/sandbox": "^0.1.3",
+    "cron-parser": "5.10.2",
+    "patchright-core": "1.62.2",
+    "pg": "^8.23.0",
+    "solari-crew-core": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

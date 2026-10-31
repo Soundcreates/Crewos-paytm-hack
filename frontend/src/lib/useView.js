@@ -1,0 +1,6 @@
+import {useEffect,useState} from 'react';
+export function routeParams(){return new URLSearchParams(location.hash.split('?')[1]||'');}
+export function setRouteParams(values){const [path,query]=location.hash.split('?');const params=new URLSearchParams(query||'');for(const [key,value] of Object.entries(values)){if(value)params.set(key,value);else params.delete(key);}location.hash=(path||'#overview')+(params.size?'?'+params:'');}
+export function setRouteParam(key,value){setRouteParams({[key]:value});}
+export function useQueryParam(key){const read=()=>routeParams().get(key)||'';const [value,setValue]=useState(read);useEffect(()=>{const update=()=>setValue(read());window.addEventListener('hashchange',update);return()=>window.removeEventListener('hashchange',update);},[key]);return [value,next=>{setValue(next);setRouteParam(key,next);}];}
+export function useView(fallback,allowed){const read=()=>{const value=routeParams().get('view');return !allowed||allowed.includes(value)?value||fallback:fallback;};const [value,setValue]=useState(read);useEffect(()=>{const update=()=>setValue(read());window.addEventListener('hashchange',update);return()=>window.removeEventListener('hashchange',update);},[fallback,allowed?.join(',')]);return [value,next=>{setValue(next);setRouteParam('view',next);}];}

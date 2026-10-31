@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111111">
+    <title>Live environment · CrewOS</title>
+    <style>
+      :root { color-scheme:light; --surface:#fff; --text:#17181b; --muted:#6d727c; --border:#e2e4e8; }
+      :root[data-theme=dark] { color-scheme:dark; --surface:#1a1c20; --text:#f3f4f6; --muted:#a1a6b1; --border:#343740; }
+      body { margin: 0; min-height: 100vh; background: #101114; color: var(--text); font: 14px system-ui, sans-serif; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 0 20px; border-bottom: 1px solid var(--border); background:var(--surface); }
+      a, button { color: inherit; }
+      button { font:inherit; font-size:12px; padding:9px 13px; border:1px solid var(--border); border-radius:8px; background:var(--surface); cursor:pointer; }
+      a:focus-visible,button:focus-visible { outline:2px solid #335cff; outline-offset:3px; }
+      header a { font-size: 12px; text-decoration: none; }
+      #status { color: var(--muted); font-size: 12px; }
+      #screen { display: grid; place-items: center; min-height: calc(100vh - 59px); padding: 16px; }
+      #desktop { width: min(100%, 1440px); height: min(calc(100vh - 92px), 810px); overflow: hidden; background: #000; box-shadow: 0 18px 60px #0008; }
+      #desktop canvas { width: 100% !important; height: 100% !important; object-fit: contain; }
+      #browser-frame { width: min(100%, 1440px); max-height: calc(100vh - 92px); object-fit: contain; background: #000; box-shadow: 0 18px 60px #0008; }
+      @media (max-width: 600px) { header { padding: 0 12px; } #screen { padding: 6px; } #desktop { height: calc(100vh - 75px); } }
+    </style>
+    <script src="/live.js" type="module"></script>
+  </head>
+  <body>
+    <header>
+      <a href="/#office?view=sessions">← CrewOS</a>
+      <span id="status" role="status" aria-live="polite">Connecting to live environment…</span>
+      <button type="button" id="reconnect">Reconnect</button>
+    </header>
+    <main id="screen"><div id="desktop" aria-label="Solari desktop live view"></div><img id="browser-frame" alt="Read-only live browser view" hidden></main>
+  </body>
+</html>

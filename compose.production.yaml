@@ -1,0 +1,44 @@
+services:
+  app:
+    image: crewos:pilot
+    build: .
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 40s
+    ports: ['127.0.0.1:4173:4173']
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PROCESS_ROLE: api
+      PILOT_MODE: 'true'
+      HOST: 0.0.0.0
+      PORT: 4173
+      PYTHON: /opt/venv/bin/python
+      APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS app origin}
+      DATABASE_URL: ${DATABASE_URL:?Set the pooled Neon database URL}
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:?Set the matching Neon Auth endpoint}
+      APP_MASTER_KEY: ${APP_MASTER_KEY:?Set the encryption key}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4173/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+  worker:
+    image: crewos:pilot
+    build: .
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 40s
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PROCESS_ROLE: worker
+      PILOT_MODE: 'true'
+      PYTHON: /opt/venv/bin/python
+      APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS app origin}
+      DATABASE_URL: ${DATABASE_URL:?Set the pooled Neon database URL}
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:?Set the matching Neon Auth endpoint}
+      APP_MASTER_KEY: ${APP_MASTER_KEY:?Set the encryption key}
+    healthcheck:
+      disable: true

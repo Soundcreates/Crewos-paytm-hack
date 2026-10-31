@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    init: true
+    ports:
+      - "4173:4173"
+    env_file:
+      - path: .env
+        required: false
+      - path: backend/.env
+        required: false
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 4173
+      PROCESS_ROLE: ${PROCESS_ROLE:-combined}
+      DEV_LLM_BASE_URL: ${DEV_LLM_CONTAINER_BASE_URL:-http://host.docker.internal:8317/v1}
+      DATABASE_URL: ""
+      NEON_AUTH_BASE_URL: ""
+      DATABASE_FILE: /data/crewos.sqlite
+      PYTHON: /opt/venv/bin/python
+    volumes:
+      - crewos_sqlite_data:/data
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4173/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    stop_grace_period: 40s
+
+volumes:
+  crewos_sqlite_data:

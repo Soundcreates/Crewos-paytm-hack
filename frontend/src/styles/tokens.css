@@ -1,0 +1,78 @@
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  src: url('../assets/fonts/bricolage-grotesque-latin.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('../assets/fonts/instrument-sans-latin.woff2') format('woff2');
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/ibm-plex-mono-latin.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+:root {
+  color-scheme: light;
+  --text: #17181b;
+  --text-secondary: #424751;
+  --text-muted: #6d727c;
+  --page: #f3f4f6;
+  --surface: #fff;
+  --surface-muted: #f7f8fa;
+  --surface-hover: #eceef2;
+  --border: #e2e4e8;
+  --accent: #335cff;
+  --accent-hover: #2447de;
+  --accent-soft: #edf1ff;
+  --on-accent: #fff;
+  --inverse: #17181b;
+  --on-inverse: #fff;
+  --success: #19734a;
+  --success-soft: #eaf6ef;
+  --warning: #875800;
+  --warning-soft: #fff5dc;
+  --danger: #b6343d;
+  --danger-soft: #fcecee;
+  --shadow-float: 0 16px 48px #17181b18, 0 2px 8px #17181b0a;
+  --sans: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  --display: 'Bricolage Grotesque', 'Instrument Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  font-family: var(--sans);
+  font-synthesis: none;
+  font-optical-sizing: auto;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --text: #f3f4f6;
+  --text-secondary: #d1d5dd;
+  --text-muted: #a1a6b1;
+  --page: #111215;
+  --surface: #1a1c20;
+  --surface-muted: #202329;
+  --surface-hover: #2a2e36;
+  --border: #343740;
+  --accent: #8ba4ff;
+  --accent-hover: #a7baff;
+  --accent-soft: #272f4a;
+  --on-accent: #111a36;
+  --inverse: #f3f4f6;
+  --on-inverse: #17181b;
+  --success: #8ad7ac;
+  --success-soft: #20382b;
+  --warning: #f2c66d;
+  --warning-soft: #3c3220;
+  --danger: #f2a0a6;
+  --danger-soft: #40292d;
+  --shadow-float: 0 20px 64px #0005, 0 2px 8px #0002;
+}
+@media (prefers-contrast: more) {
+  :root { --border: #787d87; --text-muted: #424751; }
+  :root[data-theme='dark'] { --border: #a1a6b1; --text-muted: #d1d5dd; }
+}
